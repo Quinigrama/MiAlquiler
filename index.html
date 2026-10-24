@@ -171,6 +171,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <button type="button" role="tab" data-tab="resumen" aria-selected="true">🏠 Resumen<span class="badge" id="badgeAv" hidden></span></button>
     <button type="button" role="tab" data-tab="inmuebles" aria-selected="false">🏢 Inmuebles</button>
     <button type="button" role="tab" data-tab="contratos" aria-selected="false">📄 Contratos</button>
+    <button type="button" role="tab" data-tab="cuentas" aria-selected="false">💶 Cuentas</button>
     <button type="button" role="tab" data-tab="titulares" aria-selected="false">👫 Titulares</button>
     <button type="button" role="tab" data-tab="datos" aria-selected="false">☁️ Datos</button>
   </nav>
@@ -179,6 +180,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <section class="view" id="v-resumen" role="tabpanel"></section>
     <section class="view" id="v-inmuebles" role="tabpanel" hidden></section>
     <section class="view" id="v-contratos" role="tabpanel" hidden></section>
+    <section class="view" id="v-cuentas" role="tabpanel" hidden></section>
     <section class="view" id="v-titulares" role="tabpanel" hidden></section>
     <section class="view" id="v-datos" role="tabpanel" hidden>
       <div class="panel" id="driveDet">
@@ -228,7 +230,12 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
-const fmt = (n, d = 2) => (n == null || isNaN(n)) ? "" : Number(n).toLocaleString("es-ES", { minimumFractionDigits:d, maximumFractionDigits:d });
+// Formato español siempre con punto de miles (también en 4 cifras: 5.600,00) y coma decimal
+const fmt = (n, d = 2) => {
+  if (n == null || isNaN(n)) return "";
+  const neg = n < 0, [ent, dec] = Math.abs(Number(n)).toFixed(d).split(".");
+  return (neg && Number(ent + "." + (dec || 0)) !== 0 ? "-" : "") + ent.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + (d ? "," + dec : "");
+};
 const eur = n => fmt(n || 0) + " €";
 function parseEs(s){
   if (s == null) return null;
@@ -300,7 +307,7 @@ function seed(){
     firma:"", inicio:"", duracion:5, fin:"", renta:null, diaPago:"", indice:"IPC", actRef:"", ultAct:"", fijo:null, historial:[],
     fianza:{ importe:null, org:"", fecha:"", ref:"" }, regimen:"lau19", habitual:true, red:"0.6", docs:[], notas:"", ...extra });
   return {
-    app:"miAlquiler", v:1, seed:true, updated:0,
+    app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{},
     titulares:[{ id:tp, nombre:"Padre", nif:"", rel:"Padre" }, { id:tm, nombre:"Madre", nif:"", rel:"Madre" }],
     declaracion:{ tipo:"conjunta", miembros:[tp, tm] },
     inmuebles:[
@@ -323,6 +330,8 @@ function normalize(d){
   d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
   for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; }
+  d.movs ||= []; d.arrastres ||= {};
+  for (const x of d.movs) x.docs ||= [];
   return d;
 }
 let db = load();
@@ -442,6 +451,7 @@ function renderResumen(){
     <div class="tile"><div class="k">Inmuebles</div><div class="v">${db.inmuebles.length}</div><div class="sub">${alq.length} ${plural(alq.length, "arrendado", "arrendados")}</div></div>
     <div class="tile"><div class="k">Renta al mes</div><div class="v">${mensual ? eur(mensual) : "—"}</div><div class="sub">Contratos vigentes</div></div>
     <div class="tile"><div class="k">Renta al año</div><div class="v">${mensual ? eur(mensual * 12) : "—"}</div><div class="sub">A la renta actual</div></div>
+    <div class="tile"><div class="k">Neto ${new Date().getFullYear()}</div><div class="v">${(() => { const y = new Date().getFullYear(), n = db.movs.some(x => +x.fecha?.slice(0, 4) === y) ? db.inmuebles.reduce((a, m) => a + cuentas(m, y).neto, 0) : null; return n == null ? "—" : eur(n); })()}</div><div class="sub">Rendimiento antes de amortizar</div></div>
     <div class="tile"><div class="k">Avisos</div><div class="v">${av.filter(a => a.nivel !== "info").length}</div><div class="sub">${av.filter(a => a.nivel === "info").length} datos por completar</div></div>
   </div>`;
   if (db.seed) h += `<div class="panel"><div class="panel-head"><h2>👋 Primeros pasos</h2></div><p class="note">He dejado preparados vuestros tres pisos, los dos titulares y un contrato por piso, con lo que sé. Entra en cada uno y completa los datos: la referencia catastral y el valor catastral están en el recibo del IBI; las fechas, la renta y la fianza, en el contrato.</p></div>`;
@@ -471,8 +481,8 @@ function renderResumen(){
   h += `</div>`;
   h += `<div class="panel"><div class="panel-head"><h2>🗺️ Lo que viene</h2></div><ul class="roadmap">
     <li><span class="chip ok">Fase 1</span><span>Titulares, inmuebles, inquilinos, contratos y avisos. <b>Ya está.</b></span></li>
+    <li><span class="chip ok">Fase 3</span><span>Ingresos y gastos por casillas de la Renta, con límite de intereses y reparaciones y prorrateo por días. <b>Ya está.</b></span></li>
     <li><span class="chip">Fase 2</span><span>Amortizaciones: inmueble al 3 %, muebles al 10 % con prorrateo y bajas, e importar tu hoja de Google.</span></li>
-    <li><span class="chip">Fase 3</span><span>Ingresos y gastos (comunidad, IBI, seguros…) clasificados por casillas de la Renta.</span></li>
     <li><span class="chip">Fase 4</span><span>Bandeja de documentos: facturas, extractos y recibos, con detección del piso y de duplicados.</span></li>
     <li><span class="chip">Fase 5</span><span>Carta de subida para el inquilino y renovaciones.</span></li>
     <li><span class="chip">Fase 6</span><span>Resumen fiscal de la declaración conjunta y exportación a Mi Renta y a Google Sheets.</span></li>
@@ -544,13 +554,13 @@ function renderTitulares(){
   $("v-titulares").innerHTML = h;
 }
 
-function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderTitulares(); }
+function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderTitulares(); }
 
 // =====================================================================
 // Navegación
 // =====================================================================
 function go(tab){
-  document.querySelectorAll("nav.tabs [data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  document.querySelectorAll("nav.tabs [data-tab]").forEach(b => { b.setAttribute("aria-selected", String(b.dataset.tab === tab)); if (b.dataset.tab === tab) b.scrollIntoView({ inline:"nearest", block:"nearest" }); });
   document.querySelectorAll("main > .view").forEach(v => v.hidden = v.id !== "v-" + tab);
   if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
   window.scrollTo({ top:0 });
@@ -648,6 +658,8 @@ function editInm(id){
     db.inmuebles = db.inmuebles.filter(x => x.id !== m.id);
     for (const c of db.contratos.filter(c => c.inmueble === m.id)) c.docs.forEach(d => IDB.del(d.id).catch(() => {}));
     db.contratos = db.contratos.filter(c => c.inmueble !== m.id);
+    for (const x of db.movs.filter(x => x.inm === m.id)) (x.docs || []).forEach(d => IDB.del(d.id).catch(() => {}));
+    db.movs = db.movs.filter(x => x.inm !== m.id);
     $("dlg").close(); save(); toast(`Inmueble eliminado${n ? ` con ${n} ${plural(n, "contrato", "contratos")}` : ""}.`);
   });
 }
@@ -819,12 +831,257 @@ document.querySelector("main").addEventListener("click", e => {
   if (t.closest("#addInm")) return editInm();
   if (t.closest("#addCt")) return editCt();
   if (t.closest("#addTit")) return editTit();
+  const mn = t.closest("[data-mov-new]"); if (mn) return editMov(null, mn.dataset.movNew);
+  const mv = t.closest("[data-mov]"); if (mv) return editMov(mv.dataset.mov);
+  const ar = t.closest("[data-arr]"); if (ar) return editArrastre(ar.dataset.arr);
+  const gn = t.closest("[data-gen]");
+  if (gn){ const m = iById(gn.dataset.gen), r = generarRentas(m, curYear); if (r.n) save(); toast(r.n ? `✓ ${r.n} ${plural(r.n, "renta añadida", "rentas añadidas")} de ${m.alias}.` : r.sin ? "Falta la renta mensual en el contrato." : "No hay rentas nuevas que añadir (ya estaban o aún no han llegado)."); return; }
   const av = t.closest("[data-av]");
   if (av){ const a = $("v-resumen").__av[+av.dataset.av]?.go; if (!a) return; if (a.inm) editInm(a.inm); else if (a.ct) editCt(a.ct); else if (a.tab) go(a.tab); }
 });
 document.querySelector("main").addEventListener("change", e => {
   if (e.target.id === "decTipo"){ db.declaracion.tipo = e.target.value; save(); }
+  if (e.target.id === "cuYear"){ setYear(+e.target.value); renderCuentas(); }
+  if (e.target.id === "cuInm"){ curInm = e.target.value; renderCuentas(); }
 });
+
+// =====================================================================
+// Fase 3 · Ingresos y gastos (por año e inmueble, con las casillas de la Renta)
+// =====================================================================
+// [clave, etiqueta, grupo de la Renta, ¿gasto de todo el año que se prorratea por días alquilado?]
+const CATS_G = [
+  ["comunidad", "Comunidad de propietarios", "Gastos de comunidad", true],
+  ["ibi", "IBI", "Tributos, recargos y tasas", true],
+  ["tasas", "Basuras y otras tasas", "Tributos, recargos y tasas", true],
+  ["seguro", "Seguro del hogar o de impago", "Primas de contratos de seguro", true],
+  ["intereses", "Intereses de la hipoteca", "Intereses y gastos de financiación (con límite)", true],
+  ["reparacion", "Reparación y conservación", "Reparación y conservación (con límite)", false],
+  ["suministros", "Luz, agua, gas… (los paga el propietario)", "Servicios y suministros", false],
+  ["servicios", "Administración, gestoría, portería", "Servicios personales", false],
+  ["juridico", "Abogado, procurador, desahucio", "Defensa jurídica", false],
+  ["formalizacion", "Agencia, formalización del contrato", "Formalización del arrendamiento", false],
+  ["dudoso", "Rentas impagadas (saldo de dudoso cobro)", "Saldos de dudoso cobro", false],
+  ["otros", "Otros gastos deducibles", "Otros gastos fiscalmente deducibles", false],
+  ["mueble", "Mueble o electrodoméstico (se amortiza)", "No es gasto del año: se amortiza al 10 % (fase 2)", false],
+  ["mejora", "Mejora u obra (se amortiza)", "No es gasto del año: se amortiza al 3 % (fase 2)", false],
+  ["noded", "No deducible", "No cuenta para la Renta", false]
+];
+const CATS_I = [["renta", "Renta mensual"], ["repercutido", "Gastos repercutidos al inquilino (IBI, comunidad…)"], ["otro_ing", "Otros ingresos del alquiler"]];
+const NO_GASTO = new Set(["mueble", "mejora", "noded"]);
+const LIMITADOS = new Set(["intereses", "reparacion"]);
+const catG = k => CATS_G.find(x => x[0] === k) || ["otros", k, "Otros", false];
+const catLabel = (tipo, k) => tipo === "ingreso" ? label(CATS_I, k) : catG(k)[1];
+const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+let curYear = (() => { try { return +localStorage.getItem("miAlquiler:year") || new Date().getFullYear(); } catch(e){ return new Date().getFullYear(); } })();
+let curInm = "todos";
+const setYear = y => { curYear = y; try { localStorage.setItem("miAlquiler:year", y); } catch(e){} };
+const movsOf = (y, inm) => db.movs.filter(x => x.fecha && +x.fecha.slice(0, 4) === y && (inm === "todos" || x.inm === inm));
+
+// Renta de un contrato en una fecha, según el historial de subidas
+function rentaEn(c, d){
+  const h = [...c.historial].sort((a, b) => a.desde.localeCompare(b.desde));
+  let r = h.length ? (h[0].antes || c.renta) : c.renta;
+  for (const x of h) if (x.desde <= d) r = x.renta;
+  return r || 0;
+}
+// Días de un año en que el inmueble estuvo alquilado (unión de los periodos de sus contratos)
+function diasAlquilado(m, y){
+  const a = new Date(y, 0, 1), z = new Date(y, 11, 31), tot = Math.round((z - a) / 86400000) + 1;
+  const tramos = []; let supuesto = false;
+  for (const c of ctsOf(m)){
+    let ini = c.inicio ? toDate(c.inicio) : null;
+    if (!ini){ if (c.estado !== "vigente") continue; ini = a; supuesto = true; }
+    // Un contrato vigente sigue (en prórroga) aunque haya pasado su fecha de fin; uno finalizado acaba en su fecha de fin
+    const ff = c.estado === "vigente" ? null : (c.fin || finContrato(c));
+    const fin = ff ? toDate(ff) : z;
+    const s = ini > a ? ini : a, e = fin < z ? fin : z;
+    if (e >= s) tramos.push([s, e]);
+  }
+  tramos.sort((p, q) => p[0] - q[0]);
+  let dias = 0, cur = null;
+  for (const t of tramos){
+    if (!cur){ cur = [...t]; continue; }
+    if (t[0] <= new Date(cur[1].getTime() + 86400000)){ if (t[1] > cur[1]) cur[1] = t[1]; }
+    else { dias += Math.round((cur[1] - cur[0]) / 86400000) + 1; cur = [...t]; }
+  }
+  if (cur) dias += Math.round((cur[1] - cur[0]) / 86400000) + 1;
+  return { dias, tot, supuesto };
+}
+// Cuentas de un inmueble en un año: lo que irá a la declaración (antes de amortizaciones)
+function cuentas(m, y){
+  const ms = movsOf(y, m.id), { dias, tot, supuesto } = diasAlquilado(m, y);
+  const prop = tot ? dias / tot : 0;
+  const ingresos = ms.filter(x => x.tipo === "ingreso").reduce((a, x) => a + (+x.importe || 0), 0);
+  const grupos = new Map(); let limit = 0, aparte = 0, prorrateado = 0;
+  for (const x of ms.filter(x => x.tipo === "gasto")){
+    const [k, , g, anual] = catG(x.cat); const imp = +x.importe || 0;
+    if (NO_GASTO.has(k)){ aparte += imp; continue; }
+    const ded = anual && x.prorratear !== false ? imp * prop : imp;
+    if (anual && x.prorratear !== false) prorrateado += imp - ded;
+    if (LIMITADOS.has(k)) limit += ded;
+    else grupos.set(g, (grupos.get(g) || 0) + ded);
+  }
+  const pendAnt = +(db.arrastres?.[m.id]?.[y] || 0);
+  const limTot = limit + pendAnt, limDed = Math.min(limTot, Math.max(0, ingresos)), exceso = limTot - limDed;
+  const otros = [...grupos.values()].reduce((a, v) => a + v, 0);
+  const neto = ingresos - limDed - otros;
+  return { ingresos, grupos, limit, pendAnt, limDed, exceso, otros, neto, aparte, prorrateado, dias, tot, supuesto, n:ms.length };
+}
+
+function renderCuentas(){
+  const years = new Set(db.movs.map(x => +x.fecha?.slice(0, 4)).filter(Boolean)); years.add(new Date().getFullYear()); years.add(curYear); years.add(new Date().getFullYear() - 1);
+  const ys = [...years].sort((a, b) => b - a);
+  if (curInm !== "todos" && !iById(curInm)) curInm = "todos";
+  const inms = curInm === "todos" ? db.inmuebles : [iById(curInm)];
+  let h = `<div class="panel-head"><h2>💶 Ingresos y gastos</h2>
+    <div class="toolbar"><button type="button" class="primary" data-mov-new="gasto">＋ Gasto</button><button type="button" data-mov-new="ingreso">＋ Ingreso</button></div></div>
+    <div class="fields" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      <label class="field">Año<select id="cuYear">${ys.map(y => `<option value="${y}"${y === curYear ? " selected" : ""}>${y}</option>`).join("")}</select></label>
+      <label class="field">Inmueble<select id="cuInm"><option value="todos">Todos</option>${db.inmuebles.map(m => `<option value="${m.id}"${m.id === curInm ? " selected" : ""}>${esc(m.alias)}</option>`).join("")}</select></label>
+    </div>`;
+  // Resumen por inmueble
+  const tot = { ing:0, ded:0, neto:0 };
+  h += `<div class="cards">` + inms.map(m => {
+    const r = cuentas(m, curYear); tot.ing += r.ingresos; tot.ded += r.limDed + r.otros; tot.neto += r.neto;
+    const filas = [...r.grupos.entries()].filter(([, v]) => v > 0.004).map(([g, v]) => `<dt>${esc(g)}</dt><dd class="num">${eur(v)}</dd>`).join("");
+    return `<div class="card"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${r.dias} de ${r.tot} días alquilado${r.supuesto ? " (sin fecha de inicio: cuento el año entero)" : ""}</div></div><span class="chip ${r.n ? "acc" : ""}">${r.n} ${plural(r.n, "apunte", "apuntes")}</span></div>
+      <dl class="kv">
+        <dt><b>Ingresos íntegros</b></dt><dd class="num"><b>${eur(r.ingresos)}</b></dd>
+        ${r.limit || r.pendAnt ? `<dt>Intereses + reparación${r.pendAnt ? " (con lo pendiente de años anteriores)" : ""}</dt><dd class="num">${eur(r.limDed)}</dd>` : ""}
+        ${filas}
+        <dt><b>Rendimiento neto</b></dt><dd class="num"><b>${eur(r.neto)}</b></dd>
+      </dl>
+      ${r.exceso > 0.004 ? `<div class="alert media"><span class="ic">↪️</span><div><b>${eur(r.exceso)} pasan a los 4 años siguientes</b>Intereses y reparaciones no pueden superar los ingresos del inmueble; lo que sobra se deduce más adelante.</div><span></span></div>` : ""}
+      ${r.prorrateado > 0.004 ? `<p class="note">Los gastos de todo el año (IBI, comunidad, seguro, intereses) se deducen solo por los días alquilado: ${eur(r.prorrateado)} no cuentan.</p>` : ""}
+      ${r.aparte > 0.004 ? `<p class="note">${eur(r.aparte)} en muebles, mejoras o no deducibles quedan fuera del año (los muebles y mejoras se amortizarán en la fase 2).</p>` : ""}
+      <p class="note">Sin amortizaciones todavía (fase 2). ${m.tit.map(x => `${esc(tById(x.t)?.nombre || "?")}: ${eur(r.neto * (+x.pct || 0) / 100)}`).join(" · ")}</p>
+      <div class="toolbar"><button type="button" data-gen="${m.id}">⟳ Rentas del año desde el contrato</button><button type="button" class="ghost" data-arr="${m.id}">Pendiente de años anteriores${r.pendAnt ? ": " + eur(r.pendAnt) : ""}</button></div>
+    </div>`;
+  }).join("") + `</div>`;
+  if (inms.length > 1) h += `<div class="tiles"><div class="tile"><div class="k">Ingresos ${curYear}</div><div class="v">${eur(tot.ing)}</div></div><div class="tile"><div class="k">Gastos deducibles</div><div class="v">${eur(tot.ded)}</div></div><div class="tile"><div class="k">Rendimiento neto</div><div class="v">${eur(tot.neto)}</div><div class="sub">Antes de amortizaciones y reducción</div></div></div>`;
+  // Lista de apuntes
+  const ms = movsOf(curYear, curInm).sort((a, b) => b.fecha.localeCompare(a.fecha) || (a.tipo === b.tipo ? 0 : a.tipo === "ingreso" ? 1 : -1));
+  h += `<div class="panel"><div class="panel-head"><h2>📒 Apuntes de ${curYear}</h2><span class="sub">${ms.length}</span></div>`;
+  h += ms.length ? `<ul class="mini">${ms.map(x => {
+    const m = iById(x.inm), ing = x.tipo === "ingreso";
+    return `<li style="align-items:flex-start"><div class="grow" style="white-space:normal"><div><b>${esc(x.concepto || catLabel(x.tipo, x.cat))}</b>${x.docs?.length ? " 📎" : ""}</div><div class="sub">${fdate(x.fecha)} · ${esc(catLabel(x.tipo, x.cat))}${curInm === "todos" && m ? " · " + esc(m.alias) : ""}${x.proveedor ? " · " + esc(x.proveedor) : ""}</div></div>
+      <span class="num" style="white-space:nowrap;font-weight:600;color:var(${ing ? "--ok" : "--ink"})">${ing ? "+" : "−"}${eur(x.importe)}</span><button type="button" class="ghost" data-mov="${x.id}" aria-label="Editar">✎</button></li>`;
+  }).join("")}</ul>` : `<div class="empty">No hay apuntes en ${curYear}${curInm !== "todos" ? " para este inmueble" : ""}. Añade un gasto o genera las rentas desde el contrato.</div>`;
+  h += `</div>`;
+  $("v-cuentas").innerHTML = h;
+}
+
+// Rentas mensuales a partir de los contratos (sin duplicar las que ya están)
+function generarRentas(m, y){
+  const hoy = todayIso(); let n = 0, sin = 0;
+  for (const c of ctsOf(m)){
+    for (let mes = 0; mes < 12; mes++){
+      const dia = Math.min(28, Math.max(1, parseInt(String(c.diaPago || "1")) || 1));
+      const f = `${y}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+      const finMes = `${y}-${String(mes + 1).padStart(2, "0")}-31`, iniMes = `${y}-${String(mes + 1).padStart(2, "0")}-01`;
+      if (f > hoy) continue;                                       // aún no ha llegado
+      if (c.inicio && finMes < c.inicio) continue;                 // antes del contrato
+      const fin = c.estado === "vigente" ? null : (c.fin || finContrato(c));
+      if (fin && iniMes > fin) continue;                           // ya terminado
+      const key = `renta:${c.id}:${y}-${String(mes + 1).padStart(2, "0")}`;
+      if (db.movs.some(x => x.key === key)) continue;
+      const imp = rentaEn(c, f);
+      if (!imp){ sin++; continue; }
+      db.movs.push({ id:"g-" + uid(), key, ct:c.id, inm:m.id, tipo:"ingreso", cat:"renta", fecha:f, importe:imp, concepto:`Renta de ${MESES[mes]}`, proveedor:c.inquilinos.filter(q => q.nombre).map(q => q.nombre).join(" y "), origen:"contrato", docs:[] });
+      n++;
+    }
+  }
+  return { n, sin };
+}
+// ¿Hay ya un apunte casi igual? (mismo inmueble, tipo e importe, fecha a ±5 días)
+function duplicado(x){
+  const d0 = toDate(x.fecha);
+  return db.movs.find(o => o.id !== x.id && o.inm === x.inm && o.tipo === x.tipo && Math.abs((+o.importe || 0) - (+x.importe || 0)) < 0.005 && o.fecha && Math.abs(toDate(o.fecha) - d0) <= 5 * 86400000);
+}
+
+function editMov(id, tipoNew){
+  const isNew = !id;
+  const x = isNew ? { id:"g-" + uid(), tipo:tipoNew || "gasto", inm:curInm !== "todos" ? curInm : db.inmuebles[0]?.id, cat:tipoNew === "ingreso" ? "renta" : "comunidad", fecha:(curYear === new Date().getFullYear() ? todayIso() : `${curYear}-12-31`), importe:null, concepto:"", proveedor:"", nif:"", factura:"", notas:"", origen:"manual", docs:[] } : JSON.parse(JSON.stringify(db.movs.find(o => o.id === id)));
+  x.docs ||= [];
+  let pendingDocs = [], dupOk = false;
+  const catOpts = () => x.tipo === "ingreso" ? opts(CATS_I, x.cat) : CATS_G.map(([k, l, g]) => `<option value="${k}"${k === x.cat ? " selected" : ""}>${esc(l)}</option>`).join("");
+  const docRows = () => x.docs.length ? `<ul class="mini">${x.docs.map(d => `<li><span class="grow">📎 ${esc(d.name)}</span>${d.driveId ? '<span class="chip info">Drive</span>' : ""}<button type="button" class="ghost" data-dopen="${d.id}">Abrir</button><button type="button" class="ghost danger" data-ddel="${d.id}" aria-label="Quitar documento">✕</button></li>`).join("")}</ul>` : `<p class="note">Adjunta la factura, el recibo o el justificante.</p>`;
+  const body = `
+    <div class="fields">
+      ${fSel("g-tipo", "Tipo", [["gasto","Gasto"],["ingreso","Ingreso"]], x.tipo)}
+      <label class="field">Inmueble<select id="g-inm">${db.inmuebles.map(m => `<option value="${m.id}"${m.id === x.inm ? " selected" : ""}>${esc(m.alias)}</option>`).join("")}</select></label>
+      ${fDate("g-fecha", "Fecha", x.fecha)}
+      ${fMoney("g-imp", "Importe (€)", x.importe)}
+      <div class="wide"><label class="field">Categoría<select id="g-cat">${catOpts()}</select></label></div>
+      <div class="wide calc" id="g-casilla"></div>
+      <div class="wide">${fText("g-con", "Concepto", x.concepto, 'placeholder="Ej.: Comunidad 2º trimestre"')}</div>
+      ${fText("g-prov", x.tipo === "ingreso" ? "Pagador" : "Proveedor o emisor", x.proveedor)}
+      ${fText("g-nif", "NIF del proveedor", x.nif, 'autocapitalize="characters" spellcheck="false"', "Para reparaciones y servicios, la declaración pide el NIF de quien lo hizo.")}
+      ${fText("g-fra", "Nº de factura o recibo", x.factura)}
+      <label class="check wide" id="g-prowrap"><input type="checkbox" id="g-pro"${x.prorratear !== false ? " checked" : ""}> Gasto de todo el año: deducir solo por los días alquilado</label>
+      <div class="wide"><label class="field">Notas<textarea id="g-notas">${esc(x.notas || "")}</textarea></label></div>
+    </div>
+    <fieldset><legend>Justificante</legend><div id="docBox">${docRows()}</div><div class="toolbar"><button type="button" id="docAdd">📎 Adjuntar</button></div></fieldset>
+    <p class="note" id="g-dup" style="color:var(--warn)"></p>`;
+  const read = () => Object.assign(x, { tipo:val("g-tipo"), inm:val("g-inm"), fecha:val("g-fecha"), importe:money("g-imp"), cat:val("g-cat"), concepto:val("g-con"), proveedor:val("g-prov"), nif:val("g-nif").toUpperCase().replace(/[\s.-]/g, ""), factura:val("g-fra"), notas:val("g-notas"), prorratear:$("g-pro").checked });
+  const refresh = () => {
+    read();
+    if (x.tipo === "ingreso") $("g-casilla").innerHTML = "Va a <b>ingresos íntegros</b> del inmueble. La fianza no es un ingreso: no la apuntes aquí.";
+    else { const [k, , g, anual] = catG(x.cat); $("g-casilla").innerHTML = `En la Renta: <b>${esc(g)}</b>.${LIMITADOS.has(k) ? " Junto con los intereses o las reparaciones, no puede superar los ingresos del inmueble; lo que sobre se deduce en los 4 años siguientes." : ""}${k === "mueble" ? " Apúntalo aquí con su factura y la fase 2 lo amortizará." : ""}`; $("g-prowrap").hidden = !anual; }
+    if (x.tipo === "ingreso") $("g-prowrap").hidden = true;
+    const d = x.importe && x.fecha ? duplicado(x) : null;
+    $("g-dup").textContent = d ? `⚠️ Ya hay un apunte parecido: «${d.concepto || catLabel(d.tipo, d.cat)}» del ${fdate(d.fecha)} por ${eur(d.importe)}.` : "";
+  };
+  openDlg(isNew ? (x.tipo === "ingreso" ? "Nuevo ingreso" : "Nuevo gasto") : (x.concepto || "Apunte"), body, () => {
+    read();
+    if (!x.importe || !x.fecha || !x.inm){ toast("Pon fecha, inmueble e importe."); return false; }
+    const d = duplicado(x);
+    if (d && !dupOk){ dupOk = true; toast("Parece repetido. Si es otro distinto, pulsa «Guardar» otra vez."); $("g-dup").scrollIntoView({ block:"center" }); return false; }
+    const i = db.movs.findIndex(o => o.id === x.id);
+    if (i < 0) db.movs.push(x); else db.movs[i] = x;
+    setYear(+x.fecha.slice(0, 4));
+    if (pendingDocs.length) pendingDocs = [];
+    toast("✓ Apunte guardado");
+  }, isNew ? "" : `<button type="button" class="danger" id="delMov">Eliminar</button>`);
+  refresh();
+  $("dlgBody").oninput = e => {
+    if (e.target.id === "g-tipo"){ x.tipo = e.target.value; x.cat = x.tipo === "ingreso" ? "renta" : "comunidad"; $("g-cat").innerHTML = catOpts(); }
+    dupOk = false; refresh();
+  };
+  $("dlgBody").onchange = $("dlgBody").oninput;
+  $("docAdd").onclick = () => { $("docFile").onchange = async () => {
+    for (const f of $("docFile").files){
+      const hsh = await sha(f);
+      const otro = hsh && allDocs().find(o => o.d.hash === hsh);
+      if (otro && x.docs.some(d => d.hash === hsh)){ toast(`«${f.name}» ya estaba adjunto.`); continue; }
+      if (otro) toast(`Ojo: «${f.name}» ya está adjunto en otro apunte o contrato.`);
+      const d = { id:"d-" + uid(), name:f.name, type:f.type, size:f.size, hash:hsh, added:todayIso() };
+      await IDB.put(d.id, f); x.docs.push(d); pendingDocs.push(d);
+    }
+    $("docFile").value = ""; $("docBox").innerHTML = docRows();
+  }; $("docFile").click(); };
+  $("docBox").onclick = e => {
+    const o = e.target.closest("[data-dopen]"), del = e.target.closest("[data-ddel]");
+    if (o) openDoc(x.docs.find(d => d.id === o.dataset.dopen));
+    if (del){ const id = del.dataset.ddel; x.docs = x.docs.filter(d => d.id !== id); IDB.del(id).catch(() => {}); $("docBox").innerHTML = docRows(); }
+  };
+  if (!isNew) armDelete($("delMov"), () => { x.docs.forEach(d => IDB.del(d.id).catch(() => {})); db.movs = db.movs.filter(o => o.id !== x.id); $("dlg").close(); save(); toast("Apunte eliminado."); });
+}
+function editArrastre(inmId){
+  const m = iById(inmId), v = db.arrastres?.[inmId]?.[curYear];
+  openDlg(`${m.alias} · ${curYear}`, `<p class="note">Intereses y gastos de reparación y conservación de años anteriores que no se pudieron deducir por superar los ingresos. Están en la declaración del año pasado, en este inmueble. Se pueden aplicar durante 4 años.</p>
+    <div class="fields">${fMoney("a-imp", `Pendiente de deducir que se aplica en ${curYear} (€)`, v)}</div>`, () => {
+    db.arrastres ||= {}; db.arrastres[inmId] ||= {};
+    const n = money("a-imp"); if (n) db.arrastres[inmId][curYear] = n; else delete db.arrastres[inmId][curYear];
+  });
+}
+// Todos los documentos (de contratos y de apuntes), con su carpeta de Drive
+function allDocs(){
+  const out = [];
+  for (const c of db.contratos) for (const d of c.docs) out.push({ d, owner:c, inm:iById(c.inmueble), folder:["Contratos"] });
+  for (const x of db.movs) for (const d of x.docs || []) out.push({ d, owner:x, inm:iById(x.inm), folder:[String(x.fecha?.slice(0, 4) || "Sin año"), x.tipo === "ingreso" ? "Ingresos" : "Gastos"] });
+  return out;
+}
 
 // =====================================================================
 // Copia de seguridad
@@ -835,7 +1092,7 @@ const inFrame = (() => { try { return window.self !== window.top; } catch(e){ re
 $("bkDown").onclick = async () => {
   if (inFrame){ $("bkMsg").textContent = "Aquí dentro no se pueden descargar archivos: abre la app en su web."; return; }
   const docs = [];
-  for (const c of db.contratos) for (const d of c.docs){ const b = await IDB.get(d.id).catch(() => null); if (b) docs.push({ id:d.id, type:d.type, b64:await blobToB64(b) }); }
+  for (const { d } of allDocs()){ const b = await IDB.get(d.id).catch(() => null); if (b) docs.push({ id:d.id, type:d.type, b64:await blobToB64(b) }); }
   const blob = new Blob([JSON.stringify({ app:"miAlquiler", v:1, at:new Date().toISOString(), data:db, docs })], { type:"application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `mi-alquiler-copia-${todayIso()}.json`;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -849,7 +1106,7 @@ $("bkFile").onchange = async () => {
     const d = JSON.parse(await f.text());
     if (d.app !== "miAlquiler" || !d.data) throw 0;
     pendingBk = d;
-    $("bkInfo").innerHTML = `Copia del <b>${esc(new Date(d.at).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" }))}</b>: ${d.data.inmuebles.length} inmuebles, ${d.data.contratos.length} contratos y ${(d.docs || []).length} documentos. <b>Sustituye lo que hay ahora en este aparato.</b>`;
+    $("bkInfo").innerHTML = `Copia del <b>${esc(new Date(d.at).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" }))}</b>: ${d.data.inmuebles.length} inmuebles, ${d.data.contratos.length} contratos, ${(d.data.movs || []).length} apuntes y ${(d.docs || []).length} documentos. <b>Sustituye lo que hay ahora en este aparato.</b>`;
     $("bkConfirm").hidden = false; $("bkMsg").textContent = "";
   } catch(e){ $("bkMsg").textContent = "Ese archivo no es una copia de Mi Alquiler."; }
 };
@@ -989,11 +1246,10 @@ const GD = (() => {
   }
   // Documentos: se suben una vez (se reconocen por su huella) y se apunta su id de Drive en el contrato
   async function putDoc(item){
-    const c = cById(item.ct), d = c && c.docs.find(x => x.id === item.doc);
+    const o = allDocs().find(o => o.d.id === item.doc), d = o && o.d;
     if (!d || d.driveId) return false;
     const blob = await IDB.get(d.id).catch(() => null); if (!blob) return false;
-    const m = iById(c.inmueble);
-    const fid = await folderId([ROOT, safe(m?.alias), "Contratos"]);
+    const fid = await folderId([ROOT, safe(o.inm?.alias), ...o.folder]);
     let id = d.hash ? (await list(q(fid) + " in parents and trashed=false and appProperties has { key='h' and value=" + q(d.hash) + " }", "id"))[0]?.id : null;
     if (!id) id = (await upload(null, { name:d.name, parents:[fid], ...(d.hash ? { appProperties:{ h:d.hash } } : {}) }, blob, d.type || "application/octet-stream")).id;
     d.driveId = id; db.updated = Date.now(); persist(); LS.set(K.chg, Date.now());
@@ -1001,7 +1257,7 @@ const GD = (() => {
   }
   async function flushDocs(){
     let n = 0;
-    for (const c of db.contratos) for (const d of c.docs) if (!d.driveId && !queue.some(x => x.doc === d.id)) queue.push({ doc:d.id, ct:c.id });
+    for (const { d } of allDocs()) if (!d.driveId && !queue.some(x => x.doc === d.id)) queue.push({ doc:d.id });
     while (queue.length){ render(`Subiendo documentos a Drive… (${queue.length})`); if (await putDoc(queue[0])) n++; queue.shift(); saveQueue(); }
     return n;
   }
@@ -1038,7 +1294,7 @@ const GD = (() => {
   }
   function addDoc(d, c){
     if (!hosted || !on()) return false;
-    queue.push({ doc:d.id, ct:c.id }); saveQueue(); render();
+    queue.push({ doc:d.id }); saveQueue(); render();
     return true;
   }
   async function download(id){
@@ -1063,7 +1319,7 @@ const GD = (() => {
     if (!hosted){
       h = `<p class="note">Drive solo funciona desde la app en quinigrama.github.io/MiAlquiler. Aquí usa la copia de seguridad.</p>`;
     } else if (!isOn){
-      h = `<p class="note">Guarda en la carpeta «${ROOT}» de tu Google Drive tus datos y los contratos que adjuntes, ordenados así: <strong>${ROOT}/&lt;inmueble&gt;/Contratos</strong>. Tendrás lo mismo en el móvil y en el ordenador. La app solo puede ver los archivos que ella misma crea, nada más de tu Drive.</p>
+      h = `<p class="note">Guarda en la carpeta «${ROOT}» de tu Google Drive tus datos y los documentos que adjuntes, ordenados así: <strong>${ROOT}/&lt;inmueble&gt;/Contratos</strong> y <strong>${ROOT}/&lt;inmueble&gt;/&lt;año&gt;/Gastos · Ingresos</strong>. Tendrás lo mismo en el móvil y en el ordenador. La app solo puede ver los archivos que ella misma crea, nada más de tu Drive.</p>
         <div class="toolbar"><button type="button" class="primary" data-gd="sync">Conectar con Google Drive</button></div>`;
     } else {
       const st = getSt();
@@ -1099,7 +1355,7 @@ const GD = (() => {
 GD.mount();
 render();
 const startTab = location.hash.slice(1);
-if (["resumen","inmuebles","contratos","titulares","datos"].includes(startTab)) go(startTab);
+if (["resumen","inmuebles","contratos","cuentas","titulares","datos"].includes(startTab)) go(startTab);
 // App instalable (en GitHub Pages)
 let deferredInstall = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; $("installBtn").hidden = false; });
