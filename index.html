@@ -123,6 +123,10 @@ legend{font:600 15px var(--f-display);color:var(--ink);padding:0 6px}
 .calc b{font-family:var(--f-num)}
 .check{display:flex;gap:8px;align-items:center;font-size:15px;color:var(--ink)}
 .check input{width:20px;height:20px;accent-color:var(--accent)}
+.fields.bj{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.fields.bj .field{font-size:12.5px}
+.fields.bj input,.fields.bj select{font-size:15px;padding:6px 8px}
+#v-bandeja .rowline{padding:10px 8px;gap:8px}
 a{color:var(--accent)}
 
 /* Diálogo de edición */
@@ -172,6 +176,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <button type="button" role="tab" data-tab="inmuebles" aria-selected="false">🏢 Inmuebles</button>
     <button type="button" role="tab" data-tab="contratos" aria-selected="false">📄 Contratos</button>
     <button type="button" role="tab" data-tab="cuentas" aria-selected="false">💶 Cuentas</button>
+    <button type="button" role="tab" data-tab="bandeja" aria-selected="false">📥 Bandeja</button>
     <button type="button" role="tab" data-tab="titulares" aria-selected="false">👫 Titulares</button>
     <button type="button" role="tab" data-tab="datos" aria-selected="false">☁️ Datos</button>
   </nav>
@@ -181,6 +186,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <section class="view" id="v-inmuebles" role="tabpanel" hidden></section>
     <section class="view" id="v-contratos" role="tabpanel" hidden></section>
     <section class="view" id="v-cuentas" role="tabpanel" hidden></section>
+    <section class="view" id="v-bandeja" role="tabpanel" hidden></section>
     <section class="view" id="v-titulares" role="tabpanel" hidden></section>
     <section class="view" id="v-datos" role="tabpanel" hidden>
       <div class="panel" id="driveDet">
@@ -307,7 +313,7 @@ function seed(){
     firma:"", inicio:"", duracion:5, fin:"", renta:null, diaPago:"", indice:"IPC", actRef:"", ultAct:"", fijo:null, historial:[],
     fianza:{ importe:null, org:"", fecha:"", ref:"" }, regimen:"lau19", habitual:true, red:"0.6", docs:[], notas:"", ...extra });
   return {
-    app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{},
+    app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{}, reglas:[], archivo:[],
     titulares:[{ id:tp, nombre:"Padre", nif:"", rel:"Padre" }, { id:tm, nombre:"Madre", nif:"", rel:"Madre" }],
     declaracion:{ tipo:"conjunta", miembros:[tp, tm] },
     inmuebles:[
@@ -330,7 +336,7 @@ function normalize(d){
   d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
   for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; }
-  d.movs ||= []; d.arrastres ||= {};
+  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.archivo ||= [];
   for (const x of d.movs) x.docs ||= [];
   return d;
 }
@@ -483,7 +489,7 @@ function renderResumen(){
     <li><span class="chip ok">Fase 1</span><span>Titulares, inmuebles, inquilinos, contratos y avisos. <b>Ya está.</b></span></li>
     <li><span class="chip ok">Fase 3</span><span>Ingresos y gastos por casillas de la Renta, con límite de intereses y reparaciones y prorrateo por días. <b>Ya está.</b></span></li>
     <li><span class="chip">Fase 2</span><span>Amortizaciones: inmueble al 3 %, muebles al 10 % con prorrateo y bajas, e importar tu hoja de Google.</span></li>
-    <li><span class="chip">Fase 4</span><span>Bandeja de documentos: facturas, extractos y recibos, con detección del piso y de duplicados.</span></li>
+    <li><span class="chip ok">Fase 4</span><span>Bandeja de documentos: extractos, recibos y facturas, con detección del piso, de la categoría y de duplicados. <b>Ya está.</b></span></li>
     <li><span class="chip">Fase 5</span><span>Carta de subida para el inquilino y renovaciones.</span></li>
     <li><span class="chip">Fase 6</span><span>Resumen fiscal de la declaración conjunta y exportación a Mi Renta y a Google Sheets.</span></li>
   </ul></div>`;
@@ -554,7 +560,7 @@ function renderTitulares(){
   $("v-titulares").innerHTML = h;
 }
 
-function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderTitulares(); }
+function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderBandeja(); renderTitulares(); }
 
 // =====================================================================
 // Navegación
@@ -1078,10 +1084,456 @@ function editArrastre(inmId){
 // Todos los documentos (de contratos y de apuntes), con su carpeta de Drive
 function allDocs(){
   const out = [];
-  for (const c of db.contratos) for (const d of c.docs) out.push({ d, owner:c, inm:iById(c.inmueble), folder:["Contratos"] });
-  for (const x of db.movs) for (const d of x.docs || []) out.push({ d, owner:x, inm:iById(x.inm), folder:[String(x.fecha?.slice(0, 4) || "Sin año"), x.tipo === "ingreso" ? "Ingresos" : "Gastos"] });
+  for (const c of db.contratos) for (const d of c.docs) out.push({ d, owner:c, path:[iById(c.inmueble)?.alias || "Inmueble", "Contratos"] });
+  for (const x of db.movs) for (const d of x.docs || []) out.push({ d, owner:x, path:[iById(x.inm)?.alias || "Inmueble", String(x.fecha?.slice(0, 4) || "Sin año"), x.tipo === "ingreso" ? "Ingresos" : "Gastos"] });
+  for (const a of db.archivo || []) out.push({ d:a, owner:null, path:["Extractos del banco", String(a.year || "Sin año")] });
   return out;
 }
+
+// =====================================================================
+// Fase 4 · Bandeja de documentos: extractos, recibos y facturas se leen aquí, en el aparato
+// =====================================================================
+const LIBS = {
+  pdf:["https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"],
+  worker:"https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js",
+  xlsx:["https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"]
+};
+const loadScript = src => new Promise((ok, ko) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => ko(new Error("no he podido cargar " + src.split("/").pop() + " (¿sin conexión?)")); document.head.append(s); });
+async function needPdf(){ if (!window.pdfjsLib){ await loadScript(LIBS.pdf[0]); pdfjsLib.GlobalWorkerOptions.workerSrc = LIBS.worker; } }
+async function needXlsx(){ if (!window.XLSX) await loadScript(LIBS.xlsx[0]); }
+
+// --- Lectura de texto (adaptado de Mi Renta) ---
+async function pdfLines(buf, password){
+  const pdf = await pdfjsLib.getDocument({ data:buf.slice(0), password }).promise;
+  const out = [];
+  for (let p = 1; p <= pdf.numPages; p++){
+    const page = await pdf.getPage(p), tc = await page.getTextContent(), rows = [];
+    for (const it of tc.items){
+      if (!it.str || !it.str.trim()) continue;
+      const x = it.transform[4], y = it.transform[5];
+      let r = rows.find(r => Math.abs(r.y - y) < 3);
+      if (!r){ r = { y, items:[] }; rows.push(r); }
+      r.items.push([Math.round(x * 10) / 10, Math.round((it.width || 0) * 10) / 10, it.str]);
+    }
+    rows.sort((a, b) => b.y - a.y);
+    for (const r of rows){ r.items.sort((a, b) => a[0] - b[0]); out.push(r.items); }
+  }
+  return out;
+}
+const parseAny = v => {
+  if (typeof v === "number") return v;
+  let s = String(v ?? "").replace(/[€\s ]|EUR/gi, ""); if (!s) return NaN;
+  const neg = /^-|-$|^\(.*\)$/.test(s); s = s.replace(/[()+\-]/g, "");
+  const c = s.lastIndexOf(","), d = s.lastIndexOf(".");
+  if (c > -1 && d > -1) s = c > d ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  else if (c > -1) s = s.replace(",", ".");
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
+  const n = parseFloat(s); return isNaN(n) ? NaN : (neg ? -n : n);
+};
+const RE_DATE = /(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4}|\d{2})(?!\d)|(\d{4})-(\d{2})-(\d{2})/;
+const MES3 = { ene:1, jan:1, feb:2, mar:3, abr:4, apr:4, may:5, jun:6, jul:7, ago:8, aug:8, sep:9, set:9, oct:10, nov:11, dic:12, dec:12 };
+const RE_DATE_TXT = /(?<![\d.,])(\d{1,2})\.?\s*(?:de\s+)?(ene(?:ro)?|feb(?:rero)?|mar(?:zo)?|abr(?:il)?|may(?:o)?|jun(?:io)?|jul(?:io)?|ago(?:sto)?|sep(?:tiembre)?|set(?:iembre)?|oct(?:ubre)?|nov(?:iembre)?|dic(?:iembre)?)\.?(?![a-z])(?:,?\s*(?:de\s+)?(20\d{2}))?/i;
+// Fecha a ISO (aaaa-mm-dd)
+function getDateIso(t, defY){
+  const s = String(t ?? ""), m = s.match(RE_DATE);
+  if (m){
+    if (m[4]) return `${m[4]}-${m[5]}-${m[6]}`;
+    let y = m[3]; if (y.length === 2) y = "20" + y;
+    const d = +m[1], mo = +m[2]; if (d < 1 || d > 31 || mo < 1 || mo > 12) return "";
+    return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+  const n = s.match(RE_DATE_TXT);
+  if (n && +n[1] >= 1 && +n[1] <= 31){ const mo = MES3[n[2].slice(0, 3).toLowerCase()]; return `${n[3] || defY || curYear}-${String(mo).padStart(2, "0")}-${n[1].padStart(2, "0")}`; }
+  return "";
+}
+const RE_AMT = /(?<![\d.,])-?\d{1,3}(?:[.\s]\d{3})*,\d{1,2}(?![\d.,])|(?<![\d.,])-?\d+[.,]\d{1,2}(?![\d.,])/g;
+const cleanConcept = t => String(t).replace(RE_AMT, "").replace(new RegExp(RE_DATE.source, "g"), "").replace(new RegExp(RE_DATE_TXT.source, "gi"), "").replace(/\s{2,}/g, " ").trim().slice(0, 120);
+const fileYear = txt => { const c = {}; for (const m of String(txt).matchAll(/\b(20\d{2})\b/g)) c[m[1]] = (c[m[1]] || 0) + 1; const b = Object.entries(c).sort((a, b) => b[1] - a[1])[0]; return b ? +b[0] : curYear; };
+function lineAmounts(items){
+  const out = [];
+  items.forEach((it, i) => {
+    const s = String(it[2]), next = String(items[i + 1]?.[2] || "");
+    for (const m of s.matchAll(RE_AMT)){
+      const after = s.slice(m.index + m[0].length);
+      if (/^\s*%/.test(after) || (!after.trim() && /^\s*%/.test(next))) continue;
+      const n = parseAny(m[0]); if (!isNaN(n)) out.push({ n, c:it[0] + it[1] / 2, r:it[0] + it[1] });
+    }
+  });
+  return out;
+}
+const dist = (a, col) => col ? Math.min(Math.abs(a.c - col.c), Math.abs(a.r - col.r)) : Infinity;
+function headerCols(items, text){
+  const low = text.toLowerCase();
+  if (!/saldo|balance/.test(low) || !/importe|cantidad|abono|haber|cargo|debe|entrada|salida/.test(low) || text.match(RE_AMT)) return null;
+  const pos = re => { const it = items.find(i => re.test(String(i[2]).toLowerCase())); return it ? { c:it[0] + it[1] / 2, r:it[0] + it[1] } : null; };
+  return { imp:pos(/importe|cantidad/), abono:pos(/abono|haber|entrada/), cargo:pos(/cargo|debe|salida/), saldo:pos(/saldo|balance/) };
+}
+function pickAmount(am, cols){
+  const money = cols ? [["imp", cols.imp], ["abono", cols.abono], ["cargo", cols.cargo]].filter(x => x[1]) : [];
+  if (!money.length) return am.length >= 2 ? { n:am[am.length - 2].n, saldo:am[am.length - 1].n, dudoso:false } : { n:am[0].n, saldo:null, dudoso:false };
+  const dm = a => Math.min(...money.map(([, c]) => dist(a, c)));
+  const ds = a => cols.saldo ? dist(a, cols.saldo) : Infinity;
+  const cand = am.filter(a => dm(a) <= ds(a));
+  const best = (cand.length ? cand : am).reduce((b, a) => dm(a) < dm(b) ? a : b);
+  let n = best.n;
+  const which = money.reduce((b, x) => dist(best, x[1]) < dist(best, b[1]) ? x : b)[0];
+  if (which === "cargo" && cols.abono && n > 0) n = -n;
+  return { n, dudoso:!cand.length };
+}
+function movsFromItems(rawLines, defY){
+  let cols = null, last = null; const out = [];
+  const SKIP = /saldo (inicial|final|anterior|a fecha|al )|^\s*total|resumen|p[aá]gina \d|page \d/i;
+  for (const items of rawLines){
+    const text = items.map(i => i[2]).join("  ");
+    const h = headerCols(items, text); if (h){ cols = h; last = null; continue; }
+    const am = lineAmounts(items);
+    const fecha = getDateIso(items.slice(0, 2).map(i => i[2]).join(" "), defY);
+    if (!fecha){
+      if (!/[a-záéíóúñ]{3,}/i.test(text)) continue;
+      if (last && !am.length && text.length < 70 && last.concepto.length < 90 && !/p[aá]gina|page|iban|bic|saldo|fecha/i.test(text)) last.concepto = (last.concepto + " " + cleanConcept(text)).trim();
+      else last = null;
+      continue;
+    }
+    if (!am.length || SKIP.test(text)){ last = null; continue; }
+    const p = pickAmount(am, cols);
+    if (p.dudoso){ last = null; continue; }
+    last = { fecha, concepto:cleanConcept(text) || "Movimiento", importe:p.n };
+    out.push(last);
+  }
+  return out;
+}
+function tableCols(tab){
+  const low = r => r.map(c => String(c).toLowerCase().trim());
+  let hi = tab.findIndex(r => { const t = low(r); return t.some(c => /fecha|date/.test(c)) && t.some(c => /importe|amount|cantidad|abono|cargo|haber|debe|entrada|salida/.test(c)) && r.filter(c => String(c).trim()).length >= 3; });
+  if (hi < 0) return null;
+  const h = low(tab[hi]);
+  const ci = (re, ex = []) => h.findIndex((c, i) => re.test(c) && !ex.includes(i));
+  const cF = ci(/fecha|date/), cSaldo = ci(/saldo|balance/);
+  const cAmt = ci(/importe|amount|cantidad|^valor$/, [cSaldo]);
+  const cAbono = ci(/abono|haber|entrada|ingreso|credit/, [cSaldo]), cCargo = ci(/cargo|debe|salida|gasto|debit/, [cSaldo]);
+  let cTxt = ci(/concepto|descrip|detalle/, [cF]); if (cTxt < 0) cTxt = ci(/movimiento|operaci|tipo/, [cF, cAmt]);
+  if (cAmt < 0 && cAbono < 0 && cCargo < 0) return null;
+  const extra = h.map((c, i) => i).filter(i => /observ|m[aá]s datos|referencia|beneficiario|ordenante|remitente/.test(h[i]) && i !== cTxt);
+  return { hi, cF, cAmt, cAbono, cCargo, cTxt, extra };
+}
+function movsFromTable(tab, defY){
+  const c = tableCols(tab); if (!c) return null;
+  const out = [];
+  for (const r of tab.slice(c.hi + 1)){
+    const fecha = getDateIso(c.cF >= 0 ? r[c.cF] : r.join(" "), defY); if (!fecha) continue;
+    let imp;
+    if (c.cAmt >= 0) imp = parseAny(r[c.cAmt]);
+    else { const a = c.cAbono >= 0 ? parseAny(r[c.cAbono]) : NaN, b = c.cCargo >= 0 ? parseAny(r[c.cCargo]) : NaN; imp = (isNaN(a) && isNaN(b)) ? NaN : (isNaN(a) ? 0 : Math.abs(a)) - (isNaN(b) ? 0 : Math.abs(b)); }
+    if (isNaN(imp) || !imp) continue;
+    const con = [c.cTxt >= 0 ? r[c.cTxt] : cleanConcept(r.join(" ")), ...c.extra.map(i => r[i])].map(x => String(x || "").trim()).filter(Boolean).join(" · ");
+    out.push({ fecha, concepto:con.slice(0, 160) || "Movimiento", importe:imp });
+  }
+  return out;
+}
+async function readFile(f){
+  const isPdf = /\.pdf$/i.test(f.name) || f.type === "application/pdf";
+  const isSheet = /\.(csv|txt|xls|xlsx|ods)$/i.test(f.name);
+  if (isPdf){
+    await needPdf();
+    const items = await pdfLines(await f.arrayBuffer());
+    return { kind:"pdf", items, lines:items.map(it => it.map(i => i[2]).join("  ")) };
+  }
+  if (isSheet){
+    await needXlsx();
+    let wb;
+    if (/\.(csv|txt)$/i.test(f.name)){
+      const buf = await f.arrayBuffer(); let txt;
+      try { txt = new TextDecoder("utf-8", { fatal:true }).decode(buf); } catch(e){ txt = new TextDecoder("windows-1252").decode(buf); }
+      wb = XLSX.read(txt, { type:"string", raw:true });
+    } else wb = XLSX.read(await f.arrayBuffer(), { type:"array", cellDates:true, dateNF:"dd/mm/yyyy" });
+    const table = [];
+    wb.SheetNames.forEach(n => table.push(...XLSX.utils.sheet_to_json(wb.Sheets[n], { header:1, raw:false, defval:"", dateNF:"dd/mm/yyyy" })));
+    return { kind:"sheet", table, lines:table.map(r => r.join("  ")) };
+  }
+  if (/^image\//.test(f.type)) return { kind:"image", lines:[] };
+  throw new Error("formato no admitido (usa PDF, Excel, CSV o una foto)");
+}
+
+// --- Reconocimiento: qué es, de qué piso y de qué categoría ---
+const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+const KW = [
+  ["ibi", /\bibi\b|\bi b i\b|bienes inmuebles|contribucion urbana|impuesto sobre bienes|gestrisam|recaudacion (municipal|ejecutiva)|agencia tributaria madrid|suma gestion tributaria|ayuntamiento/],
+  ["tasas", /basura|residuos|tasa de paso|\bvado\b|tasa recogida/],
+  ["comunidad", /comunidad|\bcdad\b|\bcmdad\b|\bccpp\b|cuota comunid|propietarios|administracion de fincas|admon fincas|adm fincas/],
+  ["seguro", /seguro|poliza|mapfre|\baxa\b|allianz|mutua|generali|ocaso|santalucia|santa lucia|\breale\b|linea directa|zurich|\bcaser\b|liberty|catalana occidente|segurcaixa|helvetia|pelayo|\bfiatc\b|plus ultra/],
+  ["intereses", /intereses? (del? )?(prestamo|hipoteca)|liquidacion (de )?(prestamo|hipoteca)|cuota (de )?(prestamo|hipoteca)/],
+  ["suministros", /iberdrola|endesa|naturgy|holaluz|totalenergies|canal de isabel|\bemasa\b|aguas de|electricidad|gas natural|\bluz\b|suministro/],
+  ["juridico", /abogad|procurador|bufete|desahucio/],
+  ["formalizacion", /inmobiliaria|honorarios (de )?(alquiler|arrendamiento)/],
+  ["servicios", /gestoria|asesoria|administrador/],
+  ["reparacion", /reparacion|averia|fontaner|electricista|cerrajer|pintura|reforma|caldera|revision (de )?gas|persiana|albanil|mantenimiento/],
+  ["mueble", /media ?markt|el corte ingles|ikea|conforama|electrodomestic|lavadora|frigorifico|lavavajillas|microondas|televisor|calefactor|\bsofa\b|colchon/]
+];
+const RENTA_KW = /alquiler|\brenta\b|mensualidad|arrendamiento|arrendatari/;
+const STOP = new Set(["calle","avenida","avda","plaza","paseo","camino","carretera","piso","puerta","bajo","izquierda","derecha","escalera","numero","madrid","malaga","espana","recibo","transferencia","traspaso","adeudo","cargo","abono","pago","favor","cuenta","fecha","valor"]);
+const words = s => norm(s).split(" ").filter(w => w.length >= 4 && !STOP.has(w) && !/^\d+$/.test(w));
+function detectCat(txt, tipo){
+  const t = norm(txt);
+  if (tipo === "ingreso") return /ibi|comunidad|repercut/.test(t) && !RENTA_KW.test(t) ? "repercutido" : "renta";
+  for (const [k, re] of KW) if (re.test(t)) return k;
+  return null;
+}
+function ruleKey(concepto){ return norm(concepto).split(" ").filter(w => w.length >= 3 && !/\d/.test(w) && !STOP.has(w)).slice(0, 4).join(" "); }
+// Regla aprendida para un concepto. Si el mismo concepto va a pisos distintos (dos IBI del mismo ayuntamiento),
+// decide el importe más parecido; si no se parece ninguno, no se arriesga
+function ruleFor(txt, importe){
+  const t = " " + norm(txt) + " ";
+  const ok = (db.reglas || []).filter(r => r.key && r.key.split(" ").every(w => t.includes(" " + w + " ")));
+  if (!ok.length) return null;
+  const top = Math.max(...ok.map(r => r.key.length)), best = ok.filter(r => r.key.length === top);
+  if (new Set(best.map(r => r.inm)).size === 1) return best[0];
+  const near = best.filter(r => r.importe && importe && Math.abs(r.importe - importe) / r.importe <= 0.15).sort((a, b) => Math.abs(a.importe - importe) - Math.abs(b.importe - importe));
+  return near[0] || null;
+}
+function detectInm(txt){
+  const t = norm(txt), tt = " " + t + " ", raw = String(txt).toUpperCase().replace(/\s/g, "");
+  const scores = db.inmuebles.map(m => {
+    let s = 0, why = "";
+    const rc = (m.rc || "").toUpperCase();
+    if (rc && raw.includes(rc)){ s += 100; why = "referencia catastral"; }
+    else if (rc.length >= 14 && raw.includes(rc.slice(0, 14))){ s += 60; why = "referencia catastral"; }
+    const dir = words(m.direccion), al = words(m.alias);
+    const hitD = dir.filter(w => tt.includes(" " + w + " ")).length, hitA = al.filter(w => tt.includes(" " + w + " ")).length;
+    if (hitD){ s += 15 * hitD; why ||= "dirección"; }
+    if (hitA){ s += 12 * hitA; why ||= "nombre del piso"; }
+    if (m.cp && new RegExp("\\b" + m.cp + "\\b").test(t)){ s += 8; why ||= "código postal"; }
+    for (const c of ctsOf(m)) for (const q of c.inquilinos){ const ap = words(q.nombre); const h = ap.filter(w => tt.includes(" " + w + " ")).length; if (h && (h >= Math.min(2, ap.length) || RENTA_KW.test(t))){ s += 25 * h; why ||= "inquilino"; } }
+    return { m, s, why };
+  }).sort((a, b) => b.s - a.s);
+  const [a, b] = scores;
+  if (a && a.s >= 12 && (!b || a.s >= b.s * 1.5 + 5)) return { inm:a.m.id, why:a.why };
+  return { inm:null, why:"" };
+}
+// Para un recibo o una factura: importe total, fecha, NIF del emisor y número
+function docData(lines, defY){
+  const exclNif = new Set([...db.titulares.map(t => t.nif), ...db.contratos.flatMap(c => c.inquilinos.map(q => q.nif))].filter(Boolean));
+  const BAD = /valor catastral|base liquidable|base imponible|bonificaci|reducci[oó]n|tipo de gravamen|valor de referencia|\biva\b\s*\d|cuota (integra|íntegra)|superficie|%/i;
+  const GOOD = /total|a pagar|importe|l[ií]quido|cuota|deuda|cargo|recibo|pagado/i;
+  let best = null, fallback = null;
+  for (const l of lines){
+    const ams = [...String(l).matchAll(RE_AMT)].map(m => parseAny(m[0])).filter(n => !isNaN(n) && Math.abs(n) > 0);
+    if (!ams.length) continue;
+    if (BAD.test(l) && !/total/i.test(l)) continue;
+    const v = Math.max(...ams.map(Math.abs));
+    if (GOOD.test(l)){ const pr = /total (a pagar|factura|recibo|importe)|importe total|total$|a pagar/i.test(l) ? 3 : /total/i.test(l) ? 2 : 1; if (!best || pr > best.pr || (pr === best.pr && v > best.v)) best = { v, pr }; }
+    fallback = v;
+  }
+  const text = lines.join("\n");
+  let fecha = "";
+  for (const l of lines) if (/fecha (de )?(emisi|factura|expedici|cargo|pago|recibo|adeudo)/i.test(l)){ fecha = getDateIso(l, defY); if (fecha) break; }
+  if (!fecha) for (const l of lines){ fecha = getDateIso(l, defY); if (fecha) break; }
+  const nifs = [...text.toUpperCase().matchAll(/\b([ABCDEFGHJNPQRSUVW][-\s]?\d{7}[0-9A-J]|\d{8}[A-Z]|[XYZ]\d{7}[A-Z])\b/g)].map(m => m[1].replace(/[-\s]/g, "")).filter(n => !exclNif.has(n));
+  const fra = (text.match(/(?:factura|fra\.?|n[º°o]\.?\s*(?:de\s*)?(?:factura|recibo)|n[uú]mero(?: de)? (?:factura|recibo))\s*(?:n[º°o]\.?|num\.?|:)?\s*([A-Z0-9][A-Z0-9\/\-.]{3,})/i) || [])[1] || "";
+  const ej = (text.match(/ejercicio\s*(20\d{2})/i) || [])[1];
+  return { importe:best ? best.v : fallback, fecha, nif:nifs[0] || "", factura:fra, ejercicio:ej ? +ej : null };
+}
+
+// --- Bandeja en curso (en memoria hasta que pulses «Guardar») ---
+let bandeja = [], bandejaMsg = "";
+const pid = () => "p-" + uid();
+function dupFind(p, days){
+  const d0 = toDate(p.fecha); if (!d0 || !p.importe) return null;
+  const near = o => o.inm === p.inm && o.tipo === p.tipo && Math.abs((+o.importe || 0) - p.importe) < 0.005 && o.fecha && Math.abs(toDate(o.fecha) - d0) <= days * 86400000;
+  const inDb = db.movs.find(near); if (inDb) return { where:"db", id:inDb.id, x:inDb };
+  const inB = bandeja.find(o => o.pid !== p.pid && o.accion === "nuevo" && near(o)); if (inB) return { where:"lote", id:inB.pid, x:inB };
+  return null;
+}
+function propuesta(base){
+  const p = { pid:pid(), incluir:true, accion:"nuevo", nif:"", factura:"", ...base };
+  const txt = [p.concepto, p.texto || ""].join(" ");
+  const regla = ruleFor(p.concepto, p.importe);
+  if (regla){ p.inm = regla.inm; p.cat = regla.cat; p.por = "regla aprendida"; }
+  else {
+    const di = detectInm(txt); p.inm = di.inm; p.por = di.why;
+    p.cat = detectCat(txt, p.tipo);
+  }
+  p.relevante = !!(regla || p.cat && (p.tipo === "gasto" || p.inm) || (p.tipo === "ingreso" && (p.inm || RENTA_KW.test(norm(txt)))));
+  p.cat ||= p.tipo === "ingreso" ? "renta" : "otros";
+  if (!p.inm && db.inmuebles.length === 1) p.inm = db.inmuebles[0].id;
+  return p;
+}
+function recheckDup(p){
+  if (!p.inm || p.accion === "ignorar" && !p.dup) { p.dup = null; return; }
+  const dup = dupFind(p, p.origen === "documento" ? 25 : 5);
+  p.dup = dup;
+  if (dup && p.accion === "nuevo") p.accion = p.origen === "documento" ? "adjuntar" : "ignorar";
+}
+async function procesar(files){
+  const msgs = [];
+  for (const f of files){
+    bandejaMsg = `Leyendo ${f.name}…`; renderBandeja();
+    try {
+      const hash = await sha(f);
+      const ya = hash && (allDocs().find(o => o.d.hash === hash) || bandeja.find(p => p.file?.hash === hash));
+      if (ya){ msgs.push(`«${f.name}» ya estaba ${ya.pid ? "en la bandeja" : "guardado"}: no lo vuelvo a leer.`); continue; }
+      const r = await readFile(f);
+      const joined = r.lines.join(" "), defY = fileYear(joined);
+      const movs = r.kind === "sheet" ? movsFromTable(r.table, defY) || [] : r.kind === "pdf" ? movsFromItems(r.items, defY) : [];
+      if (movs.length >= 3){
+        const file = { id:"d-" + uid(), name:f.name, type:f.type, size:f.size, hash, added:todayIso(), blob:f, kind:"extracto" };
+        let n = 0, rel = 0;
+        for (const m of movs){
+          const p = propuesta({ origen:"extracto", file, fecha:m.fecha, concepto:m.concepto, importe:Math.round(Math.abs(m.importe) * 100) / 100, tipo:m.importe < 0 ? "gasto" : "ingreso" });
+          if (!p.relevante) p.incluir = false;
+          bandeja.push(p); recheckDup(p); n++; if (p.relevante) rel++;
+        }
+        msgs.push(`${f.name}: extracto con ${n} movimientos, ${rel} ${plural(rel, "parece", "parecen")} de los pisos.`);
+      } else {
+        const d = r.kind === "image" ? { importe:null, fecha:"", nif:"", factura:"" } : docData(r.lines, defY);
+        const tit0 = cleanConcept(r.lines.find(l => /recibo|factura|impuesto|liquidaci|p[oó]liza|justificante/i.test(l)) || f.name.replace(/\.[a-z0-9]+$/i, ""));
+        const emisor = cleanConcept((r.lines[0] || "").replace(/\b(CIF|NIF)\b.*$/i, "")).replace(/\s*-\s*$/, "");
+        const titulo = (emisor && emisor !== tit0 && !norm(tit0).includes(norm(emisor)) ? emisor + " · " + tit0 : tit0).slice(0, 90);
+        const file = { id:"d-" + uid(), name:f.name, type:f.type, size:f.size, hash, added:todayIso(), blob:f, kind:"documento" };
+        const p = propuesta({ origen:"documento", file, texto:joined.slice(0, 4000), fecha:d.fecha || todayIso(), concepto:titulo || f.name, importe:d.importe ? Math.round(d.importe * 100) / 100 : null, tipo:"gasto", nif:d.nif, factura:d.factura });
+        p.incluir = true;
+        if (d.ejercicio && p.cat === "ibi") p.concepto = `IBI ${d.ejercicio}${titulo && !/ibi/i.test(titulo) ? " · " + titulo : ""}`;
+        bandeja.push(p); recheckDup(p);
+        msgs.push(r.kind === "image" ? `${f.name}: foto guardada; escribe tú el importe y la fecha.` : `${f.name}: ${p.importe ? eur(p.importe) : "sin importe claro"}${p.inm ? " · " + iById(p.inm).alias : ""}${p.dup ? " · coincide con un apunte que ya existe" : ""}.`);
+      }
+    } catch(e){ msgs.push(`No he podido leer ${f.name}: ${e.message}.`); }
+  }
+  const n = conciliar();
+  if (n) msgs.push(`${n} ${plural(n, "recibo o factura coincide", "recibos o facturas coinciden")} con un cargo del banco: lo adjunto a ese cargo en vez de apuntarlo dos veces.`);
+  bandejaMsg = msgs.join(" "); renderBandeja();
+}
+// Un recibo o factura y un cargo del banco por el mismo importe y fechas cercanas son el mismo gasto:
+// el cargo se queda como apunte (y toma el piso del documento) y el documento se le adjunta
+function conciliar(){
+  let n = 0;
+  for (const d of bandeja.filter(p => p.origen === "documento" && p.importe && p.accion !== "ignorar" && !(p.dup && p.dup.where === "db"))){
+    const d0 = toDate(d.fecha);
+    const cargo = bandeja.filter(e => e.origen === "extracto" && e.tipo === d.tipo && Math.abs(e.importe - d.importe) < 0.005 && (!e.inm || !d.inm || e.inm === d.inm) && d0 && Math.abs(toDate(e.fecha) - d0) <= 25 * 86400000 && !(e.dup && e.dup.where === "db"))
+      .sort((a, b) => Math.abs(toDate(a.fecha) - d0) - Math.abs(toDate(b.fecha) - d0))[0];
+    if (!cargo) continue;
+    if (!cargo.inm && d.inm){ cargo.inm = d.inm; cargo.por = "por el " + (d.cat === "ibi" ? "recibo del IBI" : "documento"); }
+    if (d.cat && (cargo.cat === "otros" || !cargo.relevante)) cargo.cat = d.cat;
+    cargo.incluir = true; cargo.relevante = true; cargo.accion = "nuevo"; cargo.dup = null;
+    if (!cargo.nif && d.nif) cargo.nif = d.nif; if (!cargo.factura && d.factura) cargo.factura = d.factura;
+    d.inm ||= cargo.inm;
+    d.dup = { where:"lote", id:cargo.pid, x:cargo }; d.accion = "adjuntar";
+    n++;
+  }
+  return n;
+}
+// Solo aprende cuando tú corriges el piso o la categoría de un movimiento del banco
+function aprender(p){
+  if (p.origen !== "extracto" || !p.inm) return;
+  const cambiado = (p.inm0 !== undefined && p.inm0 !== p.inm) || (p.cat0 !== undefined && p.cat0 !== p.cat);
+  if (!cambiado) return;
+  const key = ruleKey(p.concepto); if (!key || key.split(" ").length < 2) return;
+  db.reglas ||= [];
+  const mismo = db.reglas.find(r => r.key === key && r.inm === p.inm);
+  if (mismo){ mismo.cat = p.cat; mismo.importe = p.importe; mismo.n = (mismo.n || 0) + 1; return; }
+  db.reglas.push({ id:"r-" + uid(), key, inm:p.inm, cat:p.cat, importe:p.importe, n:1 });
+}
+async function guardarBandeja(){
+  const sel = bandeja.filter(p => p.incluir && p.accion !== "ignorar");
+  if (!sel.length){ toast("No hay nada marcado para guardar."); return; }
+  const falta = sel.find(p => !p.inm || !p.importe || !p.fecha);
+  if (falta){ toast(`Falta ${!falta.inm ? "el piso" : !falta.importe ? "el importe" : "la fecha"} en «${falta.concepto}».`); return; }
+  const creado = new Map(); let nuevos = 0, adj = 0;
+  const meta = f => ({ id:f.id, name:f.name, type:f.type, size:f.size, hash:f.hash, added:f.added });
+  // Primero los apuntes nuevos; después los justificantes que se adjuntan
+  for (const p of sel.filter(p => p.accion === "nuevo")){
+    const x = { id:"g-" + uid(), tipo:p.tipo, inm:p.inm, cat:p.cat, fecha:p.fecha, importe:p.importe, concepto:p.concepto, proveedor:"", nif:p.nif || "", factura:p.factura || "", notas:"", origen:p.origen, fuente:p.file?.name || "", docs:[] };
+    if (p.origen === "documento"){ await IDB.put(p.file.id, p.file.blob); x.docs.push(meta(p.file)); }
+    db.movs.push(x); creado.set(p.pid, x); nuevos++;
+    aprender(p);
+  }
+  for (const p of sel.filter(p => p.accion === "adjuntar" && p.dup)){
+    const x = p.dup.where === "db" ? db.movs.find(o => o.id === p.dup.id) : creado.get(p.dup.id);
+    if (!x) continue;
+    await IDB.put(p.file.id, p.file.blob); (x.docs ||= []).push(meta(p.file));
+    if (!x.nif && p.nif) x.nif = p.nif; if (!x.factura && p.factura) x.factura = p.factura;
+    adj++;
+  }
+  // Los extractos se archivan una vez (para tenerlos también en Drive)
+  db.archivo ||= [];
+  const files = new Map(); for (const p of bandeja) if (p.origen === "extracto") files.set(p.file.id, p.file);
+  for (const f of files.values()){ if (db.archivo.some(a => a.hash && a.hash === f.hash)) continue; await IDB.put(f.id, f.blob); db.archivo.push({ ...meta(f), kind:"extracto", year:+(bandeja.find(p => p.file === f)?.fecha || "").slice(0, 4) || curYear }); }
+  bandeja = []; bandejaMsg = "";
+  save();
+  toast(`✓ ${nuevos} ${plural(nuevos, "apunte nuevo", "apuntes nuevos")}${adj ? ` y ${adj} ${plural(adj, "justificante adjuntado", "justificantes adjuntados")}` : ""}.`);
+}
+
+function renderBandeja(){
+  const el = $("v-bandeja"); if (!el) return;
+  const catOptsFor = (tipo, v) => tipo === "ingreso" ? opts(CATS_I, v) : CATS_G.map(([k, l]) => `<option value="${k}"${k === v ? " selected" : ""}>${esc(l)}</option>`).join("");
+  const inmOpts = v => `<option value="">— ¿De qué piso? —</option>` + db.inmuebles.map(m => `<option value="${m.id}"${m.id === v ? " selected" : ""}>${esc(m.alias)}</option>`).join("");
+  const acc = p => p.dup ? `<select data-pf="accion">${opts([["adjuntar", p.origen === "documento" ? "Adjuntarlo a ese apunte" : "Adjuntar"], ["nuevo", "Crear otro apunte"], ["ignorar", "No guardar"]].filter(o => p.origen === "documento" || o[0] !== "adjuntar"), p.accion)}</select>` : "";
+  const card = p => {
+    const dup = p.dup ? `<div class="note" style="color:var(--warn)">⚠️ Ya ${p.dup.where === "db" ? "hay" : "viene en este lote"} un apunte igual: «${esc(p.dup.x.concepto || "")}» del ${fdate(p.dup.x.fecha)} por ${eur(p.dup.x.importe)}.</div>` : "";
+    return `<div class="rowline" data-p="${p.pid}" style="grid-template-columns:auto 1fr;align-items:start">
+      <input type="checkbox" data-pf="incluir"${p.incluir ? " checked" : ""} aria-label="Incluir" style="width:22px;height:22px;margin-top:6px;accent-color:var(--accent)">
+      <div style="display:grid;gap:8px;min-width:0">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><b style="min-width:0;overflow-wrap:anywhere">${p.origen === "documento" ? "📄 " : ""}${esc(p.concepto)}</b><span class="num" style="white-space:nowrap;font-weight:600;color:var(${p.tipo === "ingreso" ? "--ok" : "--ink"})">${p.tipo === "ingreso" ? "+" : "−"}${p.importe ? eur(p.importe) : "?"}</span></div>
+        <div class="chips">${p.por ? `<span class="chip ${p.por === "regla aprendida" ? "info" : "acc"}">📍 ${esc(p.por)}</span>` : p.inm ? "" : `<span class="chip warn">Elige el piso</span>`}${p.nif ? `<span class="chip">NIF ${esc(p.nif)}</span>` : ""}${p.factura ? `<span class="chip">Nº ${esc(p.factura)}</span>` : ""}</div>
+        <div class="fields bj">
+          <label class="field">Piso<select data-pf="inm">${inmOpts(p.inm)}</select></label>
+          <label class="field">Categoría<select data-pf="cat">${catOptsFor(p.tipo, p.cat)}</select></label>
+          <label class="field">Fecha<input type="date" data-pf="fecha" value="${esc(p.fecha)}"></label>
+          <label class="field">Importe<input type="text" inputmode="decimal" class="money" data-pf="importe" value="${p.importe ? fmt(p.importe) : ""}"></label>
+          ${p.origen === "documento" ? `<label class="field">Tipo<select data-pf="tipo">${opts([["gasto","Gasto"],["ingreso","Ingreso"]], p.tipo)}</select></label>` : ""}
+        </div>
+        ${dup}${p.dup ? `<label class="field">Qué hago<span>${acc(p)}</span></label>` : ""}
+      </div></div>`;
+  };
+  const rel = bandeja.filter(p => p.origen === "documento" || p.relevante), otros = bandeja.filter(p => p.origen === "extracto" && !p.relevante);
+  const marcados = bandeja.filter(p => p.incluir && p.accion !== "ignorar").length;
+  let h = `<div class="panel"><div class="panel-head"><h2>📥 Bandeja de documentos</h2></div>
+    <label class="drop" id="dropZone" tabindex="0" style="display:grid;place-items:center;gap:6px;text-align:center;border:1.5px dashed var(--line);border-radius:12px;padding:24px 14px;background:var(--bg);cursor:pointer">
+      <span style="font-size:30px">📥</span><b style="font-family:var(--f-display);font-size:18px">Suelta aquí o toca para elegir</b>
+      <span class="note">Extractos del banco (PDF, Excel o CSV), recibos del IBI y de la comunidad, pólizas, facturas… o una foto del papel. Se leen en este aparato: no se envían a ningún sitio.</span>
+      <input type="file" id="bjFile" multiple accept=".pdf,.csv,.txt,.xls,.xlsx,.ods,image/*,application/pdf" hidden>
+    </label>
+    <p class="note st" style="margin-top:10px" aria-live="polite">${esc(bandejaMsg)}</p></div>`;
+  if (bandeja.length){
+    h += `<div class="panel"><div class="panel-head"><h2>🔎 Revisa antes de guardar</h2><div class="toolbar"><button type="button" id="bjClear" class="ghost">Vaciar</button><button type="button" class="primary" id="bjSave">Guardar ${marcados}</button></div></div>
+      <p class="note" style="margin-bottom:10px">He marcado lo que parece de los pisos. Corrige el piso o la categoría si hace falta: lo recordaré para la próxima vez.</p>
+      <div style="display:grid;gap:8px">${rel.map(card).join("") || `<p class="note">Nada de este extracto parece de los pisos.</p>`}</div>
+      ${otros.length ? `<details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Otros movimientos del extracto (${otros.length})</summary><p class="note" style="margin:8px 0">No parecen de los pisos. Marca los que sí lo sean.</p><div style="display:grid;gap:8px">${otros.map(card).join("")}</div></details>` : ""}
+    </div>`;
+  }
+  const reglas = db.reglas || [];
+  h += `<div class="panel"><div class="panel-head"><h2>🧠 Lo que he aprendido</h2></div>
+    ${reglas.length ? `<ul class="mini">${reglas.map(r => `<li><span class="grow">«${esc(r.key)}» → ${esc(iById(r.inm)?.alias || "?")} · ${esc(catLabel("gasto", r.cat) || label(CATS_I, r.cat))}</span><button type="button" class="ghost danger" data-rdel="${r.id}" aria-label="Olvidar">✕</button></li>`).join("")}</ul>` : `<p class="note">Cuando guardes movimientos del banco, recordaré a qué piso y categoría van (por ejemplo, el recibo de una comunidad) para clasificarlos solos la próxima vez.</p>`}</div>`;
+  const arch = db.archivo || [];
+  if (arch.length) h += `<div class="panel"><div class="panel-head"><h2>🗂️ Extractos leídos</h2></div><ul class="mini">${arch.slice().reverse().map(a => `<li><span class="grow">🏦 ${esc(a.name)}</span><span class="sub">${fdate(a.added)}</span>${a.driveId ? '<span class="chip info">Drive</span>' : ""}<button type="button" class="ghost" data-aopen="${a.id}">Abrir</button></li>`).join("")}</ul></div>`;
+  el.innerHTML = h;
+}
+// Eventos de la bandeja
+document.addEventListener("change", e => {
+  if (e.target.id === "bjFile"){ const fs = [...e.target.files]; e.target.value = ""; if (fs.length) procesar(fs); return; }
+  const row = e.target.closest("#v-bandeja [data-p]"); if (!row) return;
+  const p = bandeja.find(x => x.pid === row.dataset.p), k = e.target.dataset.pf; if (!p || !k) return;
+  if (!("inm0" in p)){ p.inm0 = p.inm; p.cat0 = p.cat; }
+  if (k === "incluir") p.incluir = e.target.checked;
+  else if (k === "importe") p.importe = parseEs(e.target.value);
+  else if (k === "tipo"){ p.tipo = e.target.value; p.cat = p.tipo === "ingreso" ? "renta" : (detectCat(p.concepto + " " + (p.texto || ""), "gasto") || "otros"); }
+  else p[k] = e.target.value;
+  if (k === "inm" || k === "cat") p.por = k === "inm" ? "" : p.por;
+  if (["inm", "fecha", "importe", "tipo"].includes(k)){ p.accion = "nuevo"; recheckDup(p); }
+  if (k === "inm" || k === "cat" || k === "importe") p.incluir = true;
+  renderBandeja();
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest("#v-bandeja")) return;
+  if (e.target.closest("#bjSave")) return guardarBandeja();
+  if (e.target.closest("#bjClear")){ bandeja = []; bandejaMsg = ""; renderBandeja(); return; }
+  const rd = e.target.closest("[data-rdel]"); if (rd){ db.reglas = db.reglas.filter(r => r.id !== rd.dataset.rdel); save(); return; }
+  const ao = e.target.closest("[data-aopen]"); if (ao){ openDoc(db.archivo.find(a => a.id === ao.dataset.aopen)); return; }
+});
+["dragover", "dragenter"].forEach(ev => document.addEventListener(ev, e => { const z = e.target.closest?.("#dropZone"); if (z){ e.preventDefault(); z.style.borderColor = "var(--accent)"; } }));
+document.addEventListener("dragleave", e => { const z = e.target.closest?.("#dropZone"); if (z) z.style.borderColor = ""; });
+document.addEventListener("drop", e => { const z = e.target.closest?.("#dropZone"); if (!z) return; e.preventDefault(); z.style.borderColor = ""; const fs = [...(e.dataTransfer?.files || [])]; if (fs.length) procesar(fs); });
+document.addEventListener("keydown", e => { if (e.target.id === "dropZone" && (e.key === "Enter" || e.key === " ")){ e.preventDefault(); $("bjFile").click(); } });
+// Archivos compartidos desde otra app (si el sistema lo permite) o pegados
+document.addEventListener("paste", e => { if (!$("v-bandeja") || $("v-bandeja").hidden) return; const fs = [...(e.clipboardData?.files || [])]; if (fs.length){ e.preventDefault(); procesar(fs); } });
 
 // =====================================================================
 // Copia de seguridad
@@ -1249,7 +1701,7 @@ const GD = (() => {
     const o = allDocs().find(o => o.d.id === item.doc), d = o && o.d;
     if (!d || d.driveId) return false;
     const blob = await IDB.get(d.id).catch(() => null); if (!blob) return false;
-    const fid = await folderId([ROOT, safe(o.inm?.alias), ...o.folder]);
+    const fid = await folderId([ROOT, ...o.path.map(safe)]);
     let id = d.hash ? (await list(q(fid) + " in parents and trashed=false and appProperties has { key='h' and value=" + q(d.hash) + " }", "id"))[0]?.id : null;
     if (!id) id = (await upload(null, { name:d.name, parents:[fid], ...(d.hash ? { appProperties:{ h:d.hash } } : {}) }, blob, d.type || "application/octet-stream")).id;
     d.driveId = id; db.updated = Date.now(); persist(); LS.set(K.chg, Date.now());
@@ -1319,7 +1771,7 @@ const GD = (() => {
     if (!hosted){
       h = `<p class="note">Drive solo funciona desde la app en quinigrama.github.io/MiAlquiler. Aquí usa la copia de seguridad.</p>`;
     } else if (!isOn){
-      h = `<p class="note">Guarda en la carpeta «${ROOT}» de tu Google Drive tus datos y los documentos que adjuntes, ordenados así: <strong>${ROOT}/&lt;inmueble&gt;/Contratos</strong> y <strong>${ROOT}/&lt;inmueble&gt;/&lt;año&gt;/Gastos · Ingresos</strong>. Tendrás lo mismo en el móvil y en el ordenador. La app solo puede ver los archivos que ella misma crea, nada más de tu Drive.</p>
+      h = `<p class="note">Guarda en la carpeta «${ROOT}» de tu Google Drive tus datos y los documentos que adjuntes, ordenados así: <strong>${ROOT}/&lt;inmueble&gt;/Contratos</strong> y <strong>${ROOT}/&lt;inmueble&gt;/&lt;año&gt;/Gastos · Ingresos</strong> (y los extractos en «Extractos del banco»). Tendrás lo mismo en el móvil y en el ordenador. La app solo puede ver los archivos que ella misma crea, nada más de tu Drive.</p>
         <div class="toolbar"><button type="button" class="primary" data-gd="sync">Conectar con Google Drive</button></div>`;
     } else {
       const st = getSt();
@@ -1355,7 +1807,7 @@ const GD = (() => {
 GD.mount();
 render();
 const startTab = location.hash.slice(1);
-if (["resumen","inmuebles","contratos","cuentas","titulares","datos"].includes(startTab)) go(startTab);
+if (["resumen","inmuebles","contratos","cuentas","bandeja","titulares","datos"].includes(startTab)) go(startTab);
 // App instalable (en GitHub Pages)
 let deferredInstall = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; $("installBtn").hidden = false; });
