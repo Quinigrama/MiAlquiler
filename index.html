@@ -162,7 +162,9 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
       <button id="driveChip" type="button" class="drivechip" hidden></button>
     </div>
     <h1>Mi Alquiler</h1>
-    <p class="lede">Los pisos, los inquilinos y los contratos, con los datos tal y como los pide la declaración de la renta. Todo se guarda en este aparato y, si quieres, en tu Google Drive.</p>
+    <p class="lede" id="ledeTxt">Los pisos, los inquilinos y los contratos, con los datos tal y como los pide la declaración de la renta. Todo se guarda en este aparato y, si quieres, en tu Google Drive.</p>
+    <div class="toolbar"><button type="button" id="installBtn" class="primary" hidden>📲 Instalar como app</button></div>
+    <p class="note" id="installHelp" hidden></p>
   </header>
 
   <nav class="tabs" role="tablist" aria-label="Secciones">
@@ -1098,7 +1100,17 @@ GD.mount();
 render();
 const startTab = location.hash.slice(1);
 if (["resumen","inmuebles","contratos","titulares","datos"].includes(startTab)) go(startTab);
-if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+// App instalable (en GitHub Pages)
+let deferredInstall = null;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; $("installBtn").hidden = false; });
+$("installBtn").onclick = async () => { if (!deferredInstall) return; deferredInstall.prompt(); try { await deferredInstall.userChoice; } catch(e){} deferredInstall = null; $("installBtn").hidden = true; };
+window.addEventListener("appinstalled", () => { $("installBtn").hidden = true; $("installHelp").hidden = true; toast("✓ Mi Alquiler instalada"); });
+if (location.hostname.endsWith("github.io")){
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+  const standalone = (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone;
+  if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)){ $("installHelp").hidden = false; $("installHelp").textContent = "En iPhone o iPad: pulsa el botón Compartir de Safari y luego «Añadir a pantalla de inicio»."; }
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch(e){}
+}
 </script>
 </body>
 </html>
