@@ -17,6 +17,6 @@ Abre la app: https://quinigrama.github.io/MiAlquiler/
 3. Ingresos y gastos clasificados por casillas de la Renta. ✅
 4. Bandeja de documentos con detección del piso y de duplicados. ✅
 5. Carta de subida para el inquilino, renovaciones y avisos al calendario. ✅
-6. Resumen fiscal y exportación a Mi Renta y Google Sheets.
+6. Resumen fiscal y exportación a Mi Renta y Google Sheets. ✅
 
 Es una herramienta de ayuda: el dato que manda es el de la Agencia Tributaria.

@@ -155,6 +155,16 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
 .drivechip.warn{border-color:#E0A030;background:color-mix(in srgb,#E0A030 14%,var(--paper))}
 .st.ok{color:var(--ok)} .st.err{color:var(--bad)}
 .choice{display:grid;gap:8px;padding:10px;border:1.5px solid #E0A030;border-radius:8px}
+#v-renta table td.num{white-space:nowrap}
+#v-renta table td,#v-renta table th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right;font-weight:400}
+#v-renta table td.l,#v-renta table th.l{text-align:left}
+#v-renta table th{font:500 11px var(--f-num);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+#v-renta table tr.tot td{font-weight:600;border-top:1.5px solid var(--ink)}
+@media print{
+  :root{--bg:#fff;--paper:#fff;--ink:#000;--muted:#444;--line:#bbb}
+  nav.tabs,header .toolbar,#installHelp,.noprint,#driveChip,.toast{display:none!important}
+  .wrap{padding:0;max-width:none} .panel,.card{break-inside:avoid;border-color:#bbb}
+}
 .toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:10px;font-size:14.5px;z-index:50;max-width:calc(100vw - 32px);box-shadow:0 8px 24px rgba(0,0,0,.25)}
 </style>
 </head>
@@ -177,6 +187,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <button type="button" role="tab" data-tab="contratos" aria-selected="false">📄 Contratos</button>
     <button type="button" role="tab" data-tab="cuentas" aria-selected="false">💶 Cuentas</button>
     <button type="button" role="tab" data-tab="amort" aria-selected="false">📉 Amortizaciones</button>
+    <button type="button" role="tab" data-tab="renta" aria-selected="false">🧾 Renta</button>
     <button type="button" role="tab" data-tab="bandeja" aria-selected="false">📥 Bandeja</button>
     <button type="button" role="tab" data-tab="titulares" aria-selected="false">👫 Titulares</button>
     <button type="button" role="tab" data-tab="datos" aria-selected="false">☁️ Datos</button>
@@ -188,6 +199,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <section class="view" id="v-contratos" role="tabpanel" hidden></section>
     <section class="view" id="v-cuentas" role="tabpanel" hidden></section>
     <section class="view" id="v-amort" role="tabpanel" hidden></section>
+    <section class="view" id="v-renta" role="tabpanel" hidden></section>
     <section class="view" id="v-bandeja" role="tabpanel" hidden></section>
     <section class="view" id="v-titulares" role="tabpanel" hidden></section>
     <section class="view" id="v-datos" role="tabpanel" hidden>
@@ -345,7 +357,7 @@ function normalize(d){
 }
 let db = load();
 function persist(){ try { localStorage.setItem(KEY, JSON.stringify(db)); } catch(e){ toast("⚠️ No se ha podido guardar en este aparato."); } }
-function save(){ db.seed = false; db.updated = Date.now(); persist(); GD.markChanged(); render(); }
+function save(){ db.seed = false; db.updated = Date.now(); persist(); GD.markChanged(); render(); try { publicarParaMiRenta(); } catch(e){} }
 
 const tById = id => db.titulares.find(t => t.id === id);
 const iById = id => db.inmuebles.find(m => m.id === id);
@@ -497,7 +509,7 @@ function renderResumen(){
     <li><span class="chip ok">Fase 3</span><span>Ingresos y gastos por casillas de la Renta, con límite de intereses y reparaciones y prorrateo por días. <b>Ya está.</b></span></li>
     <li><span class="chip ok">Fase 4</span><span>Bandeja de documentos: extractos, recibos y facturas, con detección del piso, de la categoría y de duplicados. <b>Ya está.</b></span></li>
     <li><span class="chip ok">Fase 5</span><span>Carta de subida para el inquilino, renovaciones y avisos al calendario. <b>Ya está.</b></span></li>
-    <li><span class="chip">Fase 6</span><span>Resumen fiscal de la declaración conjunta y exportación a Mi Renta y a Google Sheets.</span></li>
+    <li><span class="chip ok">Fase 6</span><span>Resumen fiscal de la declaración, exportación a Mi Renta y hoja de Google Sheets de ida y vuelta. <b>Ya está.</b></span></li>
   </ul></div>`;
   $("v-resumen").innerHTML = h;
   $("v-resumen").__av = av;
@@ -566,7 +578,7 @@ function renderTitulares(){
   $("v-titulares").innerHTML = h;
 }
 
-function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderAmort(); renderBandeja(); renderTitulares(); }
+function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderAmort(); renderRenta(); renderBandeja(); renderTitulares(); }
 
 // =====================================================================
 // Navegación
@@ -1522,6 +1534,204 @@ document.addEventListener("click", e => {
 });
 
 // =====================================================================
+// Fase 6 · Resumen fiscal (como lo pide Renta Web), Mi Renta y Google Sheets
+// =====================================================================
+function declaraciones(){
+  const d = db.declaracion;
+  if (d.tipo === "conjunta"){ const ms = d.miembros.filter(tById); return [{ id:"conjunta", nombre:"Declaración conjunta" + (ms.length ? " · " + ms.map(t => tById(t).nombre).join(" y ") : ""), miembros:ms }]; }
+  return db.titulares.map(t => ({ id:t.id, nombre:`Declaración de ${t.nombre}`, miembros:[t.id] }));
+}
+const pctEn = (m, miembros) => m.tit.filter(x => miembros.includes(x.t)).reduce((a, x) => a + (+x.pct || 0), 0);
+const contratosAnio = (m, y) => ctsOf(m).filter(c => { const a = `${y}-01-01`, z = `${y}-12-31`; const f = c.estado === "vigente" ? null : (c.fin || finContrato(c)); return (!c.inicio || c.inicio <= z) && (!f || f >= a); });
+function fiscal(y){
+  return declaraciones().map(dc => {
+    const inms = db.inmuebles.map(m => ({ m, pct:pctEn(m, dc.miembros) })).filter(x => x.pct > 0).map(({ m, pct }) => {
+      const r = cuentas(m, y), p = pct / 100, cts = contratosAnio(m, y);
+      return { m, pct, p, r, cts, nifs:[...new Set(cts.flatMap(c => c.inquilinos.map(q => q.nif).filter(Boolean)))] };
+    });
+    const sum = k => inms.reduce((a, x) => a + (x.r[k] || 0) * x.p, 0);
+    return { ...dc, inms, netoRed:sum("netoRed"), imputacion:sum("imputacion"), ingresos:sum("ingresos") };
+  });
+}
+// Lo que se manda a Mi Renta (las dos apps están en la misma web, así que lo lee directamente)
+function paraMiRenta(){
+  const years = {}, y0 = new Date().getFullYear();
+  const ys = new Set(db.movs.map(x => +x.fecha?.slice(0, 4)).filter(Boolean)); ys.add(y0); ys.add(y0 - 1);
+  for (const y of ys){
+    years[y] = { declaraciones:fiscal(y).map(dc => ({ id:dc.id, nombre:dc.nombre, inmuebles:dc.inms.map(x => {
+      const ct = x.cts.find(c => c.estado === "vigente") || x.cts[0];
+      return { id:x.m.id, nombre:x.m.alias, rc:x.m.rc || "", ing:x.r.ingresos, intRep:x.r.limDed, gastos:x.r.otros, amort:Math.round((x.r.amI + x.r.amM) * 100) / 100, amortInm:x.r.amI, amortMue:x.r.amM,
+        pct:x.pct, red:ct && ct.habitual && x.m.tipo === "vivienda" ? ct.red : "0", valor:Math.max(+x.m.cat.total || 0, +x.m.adq.precio || 0) || null, imputacion:x.r.imputacion, exceso:x.r.exceso, dias:x.r.dias };
+    }) })) };
+  }
+  return { app:"miAlquiler-miRenta", v:1, at:new Date().toISOString(), tipo:db.declaracion.tipo, years };
+}
+function publicarParaMiRenta(){ try { localStorage.setItem("miAlquiler:paraMiRenta", JSON.stringify(paraMiRenta())); } catch(e){} }
+
+function renderRenta(){
+  const el = $("v-renta"); if (!el) return;
+  const ys = []; for (let y = new Date().getFullYear(); y >= new Date().getFullYear() - 4; y--) ys.push(y);
+  if (!ys.includes(curYear)) ys.push(curYear);
+  const F = fiscal(curYear);
+  const fila = (k, v, p, cls = "") => `<tr class="${cls}"><td class="l">${k}</td><td class="num">${eur(v)}</td>${p < 1 ? `<td class="num">${eur(v * p)}</td>` : ""}</tr>`;
+  let h = `<div class="panel-head"><h2>🧾 Para la Renta</h2><label class="field noprint" style="min-width:120px">Ejercicio<select id="rtYear">${ys.sort((a, b) => b - a).map(y => `<option value="${y}"${y === curYear ? " selected" : ""}>${y}</option>`).join("")}</select></label></div>
+    <div class="toolbar noprint"><button type="button" class="primary" id="rtMiRenta">➡️ Llevar a Mi Renta</button><button type="button" id="rtCopy">📋 Copiar resumen</button><button type="button" id="rtPrint">🖨️ Imprimir o PDF</button><button type="button" id="rtFile">⬇️ Archivo para Mi Renta</button></div>`;
+  for (const dc of F){
+    h += `<div class="panel"><div class="panel-head"><h2>${esc(dc.nombre)}</h2><span class="chip acc">${eur(dc.netoRed)}</span></div>`;
+    if (!dc.inms.length) h += `<p class="note">No hay inmuebles a su nombre.</p>`;
+    for (const x of dc.inms){
+      const { m, r, p } = x, part = p < 1;
+      const situ = r.dias >= r.tot ? "Arrendado todo el año" : r.dias ? `Arrendado ${r.dias} días · a disposición ${r.vacio}` : "No arrendado";
+      h += `<div class="card" style="margin-bottom:12px"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${esc([m.direccion, [m.cp, m.municipio].filter(Boolean).join(" ")].filter(Boolean).join(", ") || "Sin dirección")}</div></div><span class="chip">${fmt(x.pct, x.pct % 1 ? 2 : 0)} %</span></div>
+        <dl class="kv">
+          <dt>Referencia catastral</dt><dd class="num">${esc(m.rc || "—")}</dd>
+          <dt>Uso en ${curYear}</dt><dd>${situ}${r.supuesto ? " (sin fecha de inicio)" : ""}</dd>
+          <dt>Titularidad</dt><dd>${m.tit.map(t => `${esc(tById(t.t)?.nombre || "?")} ${fmt(t.pct, 0)} % (${esc(label(REGIMEN, t.reg))})`).join(" · ")}</dd>
+          <dt>NIF arrendatarios</dt><dd class="num">${x.nifs.length ? x.nifs.map(esc).join(", ") : '<span class="chip warn">Faltan</span>'}</dd>
+          <dt>Contrato</dt><dd>${x.cts.map(c => (c.firma || c.inicio ? fdate(c.firma || c.inicio) : "sin fecha") + " · " + label(REGIMEN_CT, c.regimen).split(" (")[0]).map(esc).join("<br>") || "—"}</dd>
+        </dl>
+        <div class="tablebox" style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:14px;min-width:0">
+          <thead><tr><th class="l" style="text-align:left">Concepto</th><th style="text-align:right">Total</th>${part ? `<th style="text-align:right">Declaración</th>` : ""}</tr></thead><tbody>
+          ${fila("<b>Ingresos íntegros</b>", r.ingresos, p)}
+          ${r.limit || r.pendAnt ? fila("Intereses + reparación y conservación" + (r.pendAnt ? ` <span class="sub">(incluye ${eur(r.pendAnt)} de años anteriores)</span>` : ""), r.limDed, p) : ""}
+          ${[...r.grupos.entries()].filter(([, v]) => v > 0.004).map(([g, v]) => fila(esc(g), v, p)).join("")}
+          ${r.amI ? fila("Amortización del inmueble", r.amI, p) : ""}
+          ${r.amM ? fila("Amortización de bienes muebles", r.amM, p) : ""}
+          ${fila("<b>Rendimiento neto</b>", r.netoAm, p, "tot")}
+          ${r.reduccion ? fila(`Reducción por arrendamiento de vivienda (${fmt(r.redPct * 100, 0)} %)`, -r.reduccion, p) : ""}
+          ${fila("<b>Rendimiento neto reducido</b>", r.netoRed, p, "tot")}
+          ${r.imputacion ? fila(`Imputación de rentas (${r.vacio} días a disposición)`, r.imputacion, p) : ""}
+          </tbody></table></div>
+        ${r.exceso > 0.004 ? `<div class="alert media"><span class="ic">↪️</span><div><b>${eur(r.exceso)} de intereses y reparaciones pasan a ${curYear + 1}</b>Se pueden deducir en los 4 años siguientes.${db.arrastres?.[m.id]?.[curYear + 1] ? ` Ya está apuntado en ${curYear + 1}.` : ""}</div>${db.arrastres?.[m.id]?.[curYear + 1] ? "<span></span>" : `<button type="button" class="noprint" data-arr-next="${m.id}">Apuntar en ${curYear + 1}</button>`}</div>` : ""}
+        ${!r.n ? `<p class="note">⚠️ No hay apuntes de ${curYear} en este piso: las cifras salen a cero.</p>` : ""}
+      </div>`;
+    }
+    if (dc.inms.length) h += `<div class="calc">Total de la declaración: rendimiento neto reducido <b>${eur(dc.netoRed)}</b>${dc.imputacion ? ` · imputación de rentas <b>${eur(dc.imputacion)}</b>` : ""}.</div>`;
+    h += `</div>`;
+  }
+  h += `<div class="panel noprint"><div class="panel-head"><h2>📊 Google Sheets y Excel</h2></div>
+    <p class="note" style="margin-bottom:10px">Una hoja con los apuntes, los muebles, los contratos y este resumen. Puedes retocar los apuntes y los muebles en la hoja y traer los cambios de vuelta: las filas con id se actualizan y las filas nuevas (sin id) se añaden. Borrar una fila en la hoja no borra nada aquí.</p>
+    <div class="toolbar"><button type="button" class="primary" id="shPush">☁️ Enviar a Google Sheets</button><button type="button" id="shPull">⇅ Traer cambios de Google Sheets</button><button type="button" id="xlDown">⬇️ Descargar Excel</button><button type="button" id="xlUp">⬆️ Cargar Excel</button><input type="file" id="xlFile" accept=".xlsx,.xls,.ods" hidden></div>
+    <p class="note st" id="shMsg" style="margin-top:8px"></p></div>
+    <div class="panel"><p class="note">Es un resumen para ayudarte: el dato que manda es el borrador de la Agencia Tributaria. Las casillas de Renta Web cambian de número cada año, por eso aquí van con su nombre.</p></div>`;
+  el.innerHTML = h;
+}
+function textoResumen(){
+  const out = [`MI ALQUILER · Renta ${curYear}`, ""];
+  for (const dc of fiscal(curYear)){
+    out.push(dc.nombre.toUpperCase());
+    for (const x of dc.inms){
+      const r = x.r, p = x.p, v = n => eur(n * p);
+      out.push(``, `${x.m.alias} (${fmt(x.pct, 0)} %) · Ref. catastral ${x.m.rc || "—"}`, `Días arrendado: ${r.dias} de ${r.tot} · NIF arrendatarios: ${x.nifs.join(", ") || "—"}`,
+        `Ingresos íntegros: ${v(r.ingresos)}`, ...(r.limDed ? [`Intereses + reparación: ${v(r.limDed)}`] : []), ...[...r.grupos.entries()].filter(([, a]) => a > 0.004).map(([g, a]) => `${g}: ${v(a)}`),
+        ...(r.amI ? [`Amortización del inmueble: ${v(r.amI)}`] : []), ...(r.amM ? [`Amortización de bienes muebles: ${v(r.amM)}`] : []),
+        `Rendimiento neto: ${v(r.netoAm)}`, ...(r.reduccion ? [`Reducción ${fmt(r.redPct * 100, 0)} %: -${v(r.reduccion)}`] : []), `Rendimiento neto reducido: ${v(r.netoRed)}`,
+        ...(r.imputacion ? [`Imputación de rentas: ${v(r.imputacion)}`] : []), ...(r.exceso > 0.004 ? [`Pasa a ${curYear + 1}: ${v(r.exceso)}`] : []));
+    }
+    out.push("", `TOTAL rendimiento neto reducido: ${eur(dc.netoRed)}`, "");
+  }
+  return out.join("\n");
+}
+
+// ---------- Excel / Google Sheets ----------
+const XL_AP = ["id","Fecha","Inmueble","Tipo","Categoría","Concepto","Importe","Proveedor","NIF","Nº factura"];
+const XL_BI = ["id","Inmueble","Tipo","Qué es","Fecha de compra","Importe","% anual","Fecha de baja","Motivo de la baja","Proveedor","NIF","Nº factura"];
+async function libroExcel(){
+  await needXlsx();
+  const wb = XLSX.utils.book_new(), D = s => { if (!s) return ""; const [y, m, d] = s.split("-").map(Number); return { t:"n", v:Date.UTC(y, m - 1, d) / DAY + 25569, z:"dd/mm/yyyy" }; };
+  const ap = [XL_AP, ...db.movs.slice().sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")).map(x => [x.id, D(x.fecha), iById(x.inm)?.alias || "", x.tipo === "ingreso" ? "Ingreso" : "Gasto", catLabel(x.tipo, x.cat), x.concepto || "", +x.importe || 0, x.proveedor || "", x.nif || "", x.factura || ""])];
+  const bi = [XL_BI, ...(db.bienes || []).map(b => [b.id, iById(b.inm)?.alias || "", label(TIPOS_BIEN, b.tipo).split(" (")[0], b.concepto, D(b.alta), +b.importe || 0, +b.coef || 10, D(b.baja?.fecha), b.baja?.motivo || "", b.proveedor || "", b.nif || "", b.factura || ""])];
+  const res = [["Inmueble","%","Concepto",`${curYear} total`,"Declaración"]];
+  for (const dc of fiscal(curYear)){ res.push([dc.nombre]); for (const x of dc.inms){ const r = x.r, add = (k, v) => res.push([x.m.alias, x.pct, k, Math.round(v * 100) / 100, Math.round(v * x.p * 100) / 100]);
+    add("Ingresos íntegros", r.ingresos); if (r.limDed) add("Intereses + reparación", r.limDed); for (const [g, v] of r.grupos) if (v > 0.004) add(g, v); if (r.amI) add("Amortización del inmueble", r.amI); if (r.amM) add("Amortización de bienes muebles", r.amM);
+    add("Rendimiento neto", r.netoAm); if (r.reduccion) add("Reducción", -r.reduccion); add("Rendimiento neto reducido", r.netoRed); if (r.imputacion) add("Imputación de rentas", r.imputacion); } }
+  const ct = [["Inmueble","Estado","Inquilinos","NIF","Inicio","Fin","Renta/mes","Índice","Fianza","Régimen"], ...db.contratos.map(c => [iById(c.inmueble)?.alias || "", c.estado, c.inquilinos.map(q => q.nombre).filter(Boolean).join(" y "), c.inquilinos.map(q => q.nif).filter(Boolean).join(", "), D(c.inicio), D(finContrato(c)), +c.renta || 0, c.indice, +c.fianza?.importe || 0, label(REGIMEN_CT, c.regimen)])];
+  const hoja = (rows, widths) => { const ws = XLSX.utils.aoa_to_sheet(rows); ws["!cols"] = widths.map(w => ({ wch:w })); return ws; };
+  XLSX.utils.book_append_sheet(wb, hoja(res, [28, 6, 38, 14, 14]), `Resumen ${curYear}`);
+  XLSX.utils.book_append_sheet(wb, hoja(ap, [14, 11, 22, 8, 26, 36, 11, 22, 12, 14]), "Apuntes");
+  XLSX.utils.book_append_sheet(wb, hoja(bi, [14, 22, 22, 30, 12, 11, 8, 12, 22, 20, 12, 14]), "Muebles");
+  XLSX.utils.book_append_sheet(wb, hoja(ct, [22, 10, 30, 22, 11, 11, 10, 8, 10, 30]), "Contratos");
+  return new Blob([XLSX.write(wb, { type:"array", bookType:"xlsx" })], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+// Lee el Excel (o la hoja de Google) y prepara los cambios en apuntes y muebles
+async function leerCambios(buf){
+  await needXlsx();
+  const wb = XLSX.read(buf, { type:"array" });
+  const rows = n => wb.Sheets[n] ? XLSX.utils.sheet_to_json(wb.Sheets[n], { header:1, raw:true, defval:"" }) : [];
+  const inmBy = s => db.inmuebles.find(m => norm(m.alias) === norm(s)) || db.inmuebles.find(m => norm(s) && norm(m.alias).includes(norm(s)));
+  const dIso = v => v instanceof Date ? iso(v) : xDate(v)?.iso || "";
+  const catBy = (tipo, s) => { const t = norm(s); if (tipo === "ingreso") return (CATS_I.find(c => norm(c[1]) === t || c[0] === s) || CATS_I[0])[0]; return (CATS_G.find(c => norm(c[1]) === t || c[0] === s) || ["otros"])[0]; };
+  const cambios = { apMod:[], apNew:[], biMod:[], biNew:[], malas:0 };
+  const ap = rows("Apuntes"), H = (ap[0] || []).map(String);
+  if (H[0] === "id") for (const r of ap.slice(1)){
+    if (!r.some(c => String(c).trim())) continue;
+    const m = inmBy(r[2]), tipo = norm(r[3]).startsWith("ingreso") ? "ingreso" : "gasto", imp = xNum(r[6]), fecha = dIso(r[1]);
+    if (!m || !fecha || !(Math.abs(imp) > 0)){ cambios.malas++; continue; }
+    const v = { inm:m.id, fecha, tipo, cat:catBy(tipo, r[4]), concepto:String(r[5] || "").trim(), importe:Math.round(Math.abs(imp) * 100) / 100, proveedor:String(r[7] || "").trim(), nif:String(r[8] || "").trim().toUpperCase(), factura:String(r[9] || "").trim() };
+    const x = r[0] && db.movs.find(o => o.id === String(r[0]).trim());
+    if (x){ if (Object.keys(v).some(k => String(x[k] ?? "") !== String(v[k] ?? ""))) cambios.apMod.push([x, v]); }
+    else cambios.apNew.push(v);
+  }
+  const bi = rows("Muebles"), HB = (bi[0] || []).map(String);
+  if (HB[0] === "id") for (const r of bi.slice(1)){
+    if (!r.some(c => String(c).trim())) continue;
+    const m = inmBy(r[1]), alta = dIso(r[4]), imp = xNum(r[5]);
+    if (!m || !alta || !(imp > 0) || !String(r[3]).trim()){ cambios.malas++; continue; }
+    const tipo = (TIPOS_BIEN.find(t => norm(t[1]).startsWith(norm(r[2]))) || TIPOS_BIEN[0])[0], bj = dIso(r[7]);
+    const v = { inm:m.id, tipo, concepto:String(r[3]).trim(), alta, importe:Math.round(imp * 100) / 100, coef:xNum(r[6]) || COEF_DEF[tipo], baja:bj ? { fecha:bj, motivo:String(r[8] || "").trim() } : null, proveedor:String(r[9] || "").trim(), nif:String(r[10] || "").trim(), factura:String(r[11] || "").trim() };
+    const b = r[0] && (db.bienes || []).find(o => o.id === String(r[0]).trim());
+    if (b){ if (Object.keys(v).some(k => JSON.stringify(b[k] ?? "") !== JSON.stringify(v[k] ?? ""))) cambios.biMod.push([b, v]); }
+    else cambios.biNew.push(v);
+  }
+  return cambios;
+}
+function aplicarCambios(ch, origen){
+  const n = ch.apMod.length + ch.apNew.length + ch.biMod.length + ch.biNew.length;
+  if (!n){ toast(`No hay cambios en ${origen}${ch.malas ? ` (${ch.malas} ${plural(ch.malas, "fila incompleta", "filas incompletas")} sin piso, fecha o importe)` : ""}.`); return; }
+  openDlg(`Cambios de ${origen}`, `<ul class="mini">
+      ${ch.apMod.length ? `<li><span class="grow">✎ Apuntes modificados</span><b>${ch.apMod.length}</b></li>` : ""}
+      ${ch.apNew.length ? `<li><span class="grow">＋ Apuntes nuevos</span><b>${ch.apNew.length}</b></li>` : ""}
+      ${ch.biMod.length ? `<li><span class="grow">✎ Muebles modificados</span><b>${ch.biMod.length}</b></li>` : ""}
+      ${ch.biNew.length ? `<li><span class="grow">＋ Muebles nuevos</span><b>${ch.biNew.length}</b></li>` : ""}
+      ${ch.malas ? `<li><span class="grow">⚠️ Filas incompletas que no traigo</span><b>${ch.malas}</b></li>` : ""}
+    </ul><p class="note">Revisa que sea lo que esperas antes de aplicarlo.</p>`, () => {
+    for (const [x, v] of ch.apMod) Object.assign(x, v);
+    for (const v of ch.apNew) db.movs.push({ id:"g-" + uid(), origen:"hoja", docs:[], notas:"", ...v });
+    for (const [b, v] of ch.biMod) Object.assign(b, v);
+    db.bienes ||= []; for (const v of ch.biNew) db.bienes.push({ id:"b-" + uid(), hist:{}, docs:[], ...v });
+    toast(`✓ ${n} ${plural(n, "cambio aplicado", "cambios aplicados")}`);
+  });
+  $("dlgSave").textContent = "Aplicar";
+  $("dlg").addEventListener("close", () => $("dlgSave").textContent = "Guardar", { once:true });
+}
+const bajar = (blob, name) => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); };
+document.addEventListener("click", async e => {
+  if (!e.target.closest("#v-renta")) return;
+  const msg = t => { const el = $("shMsg"); if (el) el.textContent = t; };
+  if (e.target.closest("#rtMiRenta")){ publicarParaMiRenta(); location.href = "../MiRenta/#inmuebles"; return; }
+  if (e.target.closest("#rtCopy")){ try { await navigator.clipboard.writeText(textoResumen()); toast("✓ Resumen copiado"); } catch(err){ toast("No he podido copiar."); } return; }
+  if (e.target.closest("#rtPrint")) return window.print();
+  if (e.target.closest("#rtFile")){ if (inFrame) return toast("Abre la app en su web para descargar."); bajar(new Blob([JSON.stringify(paraMiRenta())], { type:"application/json" }), `mi-alquiler-para-mi-renta-${todayIso()}.json`); return; }
+  const an = e.target.closest("[data-arr-next]");
+  if (an){ const m = iById(an.dataset.arrNext), r = cuentas(m, curYear); db.arrastres ||= {}; db.arrastres[m.id] ||= {}; db.arrastres[m.id][curYear + 1] = Math.round(r.exceso * 100) / 100; save(); toast(`✓ ${eur(r.exceso)} apuntados para ${curYear + 1}`); return; }
+  if (e.target.closest("#xlDown")){ if (inFrame) return toast("Abre la app en su web para descargar."); try { bajar(await libroExcel(), `mi-alquiler-${todayIso()}.xlsx`); } catch(err){ toast("No he podido crear el Excel: " + err.message); } return; }
+  if (e.target.closest("#xlUp")) return $("xlFile").click();
+  if (e.target.closest("#shPush")){
+    try { msg("Preparando la hoja…"); const r = await GD.pushSheet(await libroExcel()); msg(r.nueva ? "✓ Hoja creada en tu Drive, carpeta MiAlquiler." : "✓ Hoja actualizada en tu Drive."); if (r.link) window.open(r.link, "_blank", "noopener"); }
+    catch(err){ msg(err.code === "off" ? "Primero conecta Google Drive en la pestaña Datos." : err.code === "none" ? "Todavía no hay hoja: pulsa «Enviar a Google Sheets»." : "No se pudo: " + (err.message || err.code)); }
+    return;
+  }
+  if (e.target.closest("#shPull")){
+    try { msg("Leyendo la hoja de Google…"); const buf = await GD.pullSheet(); msg(""); aplicarCambios(await leerCambios(buf), "Google Sheets"); }
+    catch(err){ msg(err.code === "off" ? "Primero conecta Google Drive en la pestaña Datos." : err.code === "none" ? "Todavía no hay hoja: pulsa «Enviar a Google Sheets»." : "No se pudo: " + (err.message || err.code)); }
+  }
+});
+document.addEventListener("change", async e => {
+  if (e.target.id === "rtYear"){ setYear(+e.target.value); render(); }
+  if (e.target.id === "xlFile"){ const f = e.target.files[0]; e.target.value = ""; if (!f) return; try { aplicarCambios(await leerCambios(await f.arrayBuffer()), "el Excel"); } catch(err){ toast("No he podido leer el Excel: " + err.message); } }
+});
+
+// =====================================================================
 // Fase 4 · Bandeja de documentos: extractos, recibos y facturas se leen aquí, en el aparato
 // =====================================================================
 const LIBS = {
@@ -2016,7 +2226,7 @@ const GD = (() => {
   const SCOPE = "https://www.googleapis.com/auth/drive.file";
   const API = "https://www.googleapis.com/drive/v3", UPL = "https://www.googleapis.com/upload/drive/v3";
   const ROOT = "MiAlquiler", DATA = "mi-alquiler-datos.json";
-  const K = { on:"miAlquilerDrive:on", who:"miAlquilerDrive:who", st:"miAlquilerDrive:state", chg:"miAlquilerDrive:chg", q:"miAlquilerDrive:queue" };
+  const K = { on:"miAlquilerDrive:on", who:"miAlquilerDrive:who", st:"miAlquilerDrive:state", chg:"miAlquilerDrive:chg", q:"miAlquilerDrive:queue", sheet:"miAlquilerDrive:sheet" };
   const LS = { get:(k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch(e){ return d; } },
                set:(k, v) => { try { localStorage.setItem(k, v); } catch(e){} }, del:k => { try { localStorage.removeItem(k); } catch(e){} } };
   const hosted = location.protocol === "https:" && /github\.io$/.test(location.hostname);
@@ -2229,7 +2439,37 @@ const GD = (() => {
     render();
     if (hosted) loadGis().then(initClient).catch(() => {});
   }
-  return { mount, markChanged, addDoc, download, render };
+  // Hoja de Google: se sube el Excel y Drive lo convierte; para traerla, se exporta otra vez a Excel
+  const SHEET = "Mi Alquiler (hoja)";
+  async function ensure(){
+    if (!hosted || !on()) throw fail("off");
+    await loadGis(); initClient(); await askToken();
+  }
+  async function sheetId(){
+    const id = LS.get(K.sheet, ""); if (id) return id;
+    const root = await folderId([ROOT]);
+    const f = (await list("name=" + q(SHEET) + " and " + q(root) + " in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false", "id"))[0];
+    if (f) LS.set(K.sheet, f.id);
+    return f?.id || null;
+  }
+  async function pushSheet(blob){
+    await ensure();
+    const XL = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    let id = await sheetId(), nueva = false;
+    if (id){
+      try { await api(UPL + "/files/" + id + "?uploadType=media&fields=id", { method:"PATCH", headers:{ "Content-Type":XL }, body:blob }); }
+      catch(e){ if (e.code === "http"){ LS.del(K.sheet); id = null; } else throw e; }
+    }
+    if (!id){ const root = await folderId([ROOT]); id = (await upload(null, { name:SHEET, mimeType:"application/vnd.google-apps.spreadsheet", parents:[root] }, blob, XL)).id; LS.set(K.sheet, id); nueva = true; }
+    const link = (await (await api(API + "/files/" + id + "?fields=webViewLink")).json()).webViewLink;
+    return { id, nueva, link };
+  }
+  async function pullSheet(){
+    await ensure();
+    const id = await sheetId(); if (!id) throw fail("none");
+    return (await api(API + "/files/" + id + "/export?mimeType=" + encodeURIComponent("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))).arrayBuffer();
+  }
+  return { mount, markChanged, addDoc, download, render, pushSheet, pullSheet };
 })();
 
 // =====================================================================
@@ -2237,8 +2477,9 @@ const GD = (() => {
 // =====================================================================
 GD.mount();
 render();
+try { publicarParaMiRenta(); } catch(e){}
 const startTab = location.hash.slice(1);
-if (["resumen","inmuebles","contratos","cuentas","amort","bandeja","titulares","datos"].includes(startTab)) go(startTab);
+if (["resumen","inmuebles","contratos","cuentas","amort","renta","bandeja","titulares","datos"].includes(startTab)) go(startTab);
 // App instalable (en GitHub Pages)
 let deferredInstall = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; $("installBtn").hidden = false; });
