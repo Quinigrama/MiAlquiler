@@ -351,7 +351,7 @@ function normalize(d){
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
   for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; c.cartas ||= []; c.prorrogas ||= []; }
   d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.archivo ||= []; d.bienes ||= [];
-  for (const m of d.inmuebles) if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true };
+  for (const m of d.inmuebles){ m.accesorios ||= []; if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true }; }
   for (const x of d.movs) x.docs ||= [];
   return d;
 }
@@ -458,12 +458,20 @@ function inquilinosTxt(c){
   if (n.length) return n.join(" y ");
   return c.inquilinos.length ? `${c.inquilinos.length} ${plural(c.inquilinos.length, "inquilino", "inquilinos")} (sin nombre)` : "Sin inquilinos";
 }
-function amortInm(m){
-  const coste = (+m.adq.precio || 0) + (+m.adq.gastos || 0);
-  const tot = +m.cat.total || 0, con = +m.cat.constr || 0;
+// Base de amortización: el mayor entre la parte de construcción del coste de adquisición y el valor catastral de la construcción
+function amortUno(o){
+  const coste = (+o.adq?.precio || 0) + (+o.adq?.gastos || 0);
+  const tot = +o.cat?.total || 0, con = +o.cat?.constr || 0;
   if (!con) return null;
   const base = Math.max(tot > 0 ? coste * con / tot : 0, con);
   return { base, anual: base * 0.03, pctConstr: tot > 0 ? con / tot : null, porCoste: tot > 0 && coste * con / tot > con };
+}
+// El inmueble y sus accesorios alquilados con él (garaje, trastero)
+function amortInm(m){
+  const partes = [m, ...(m.accesorios || [])].map(amortUno).filter(Boolean);
+  if (!partes.length) return null;
+  const p0 = amortUno(m) || partes[0];
+  return { ...p0, base:partes.reduce((a, x) => a + x.base, 0), anual:partes.reduce((a, x) => a + x.anual, 0), partes:partes.length };
 }
 
 function renderResumen(){
@@ -518,7 +526,8 @@ function renderResumen(){
 }
 
 function renderInmuebles(){
-  let h = `<div class="panel-head"><h2>🏢 Inmuebles</h2><button type="button" class="primary" id="addInm">＋ Añadir inmueble</button></div>`;
+  let h = `<div class="panel-head"><h2>🏢 Inmuebles</h2><div class="toolbar"><button type="button" id="impFichas">⬆️ Importar fichas</button><input type="file" id="impFichasFile" accept=".pdf,.xlsx,.xls,.ods,.csv,application/pdf" hidden><button type="button" class="primary" id="addInm">＋ Añadir inmueble</button></div></div>
+  <p class="note">¿Tienes una hoja con una columna por vivienda (referencia catastral, valores catastrales, compra, inquilinos, renta…)? Súbela en PDF o Excel y relleno las fichas solo.</p>`;
   if (!db.inmuebles.length) h += `<div class="empty">No hay inmuebles todavía.</div>`;
   h += `<div class="cards">` + db.inmuebles.map(m => {
     const am = amortInm(m), rc = rcOk(m.rc);
@@ -650,16 +659,30 @@ function editInm(id){
     <fieldset><legend>Catastro (recibo del IBI)</legend><div class="fields">
       ${fMoney("m-vct", "Valor catastral total (€)", m.cat.total)}
       ${fMoney("m-vcc", "Valor catastral de la construcción (€)", m.cat.constr)}
+      ${fMoney("m-vref", "Valor de referencia (€)", m.cat.ref, "El del Catastro, para el patrimonio.")}
       ${fText("m-vca", "Año del recibo", m.cat.anio, 'inputmode="numeric" maxlength="4"')}
       <label class="check wide"><input type="checkbox" id="m-rev"${m.cat.revisado !== false ? " checked" : ""}> Valor catastral revisado desde 1994 (imputación del 1,1 % si queda vacío)</label>
     </div><div class="calc" id="amCalc"></div></fieldset>
+    <fieldset><legend>Accesorios alquilados con él (garaje, trastero)</legend><div id="accRows" style="display:grid;gap:8px">${accRows()}</div>
+      <div class="toolbar"><button type="button" id="accAdd">＋ Añadir accesorio</button></div></fieldset>
     <fieldset><legend>Notas</legend><textarea id="m-notas">${esc(m.notas || "")}</textarea></fieldset>`;
+  m.accesorios ||= [];
+  function accRows(){ const A = m.accesorios || []; return A.length ? A.map((a, i) => `<div class="rowline" data-ai="${i}"><div class="fields">
+      <label class="field">Tipo<select data-ak="tipo">${opts([["garaje","Garaje"],["trastero","Trastero"],["otro","Otro"]], a.tipo)}</select></label>
+      <label class="field">Ref. catastral<input type="text" data-ak="rc" value="${esc(a.rc || "")}" data-check="rc" autocapitalize="characters"></label>
+      <label class="field">Precio de compra<input type="text" inputmode="decimal" class="money" data-ak="precio" value="${a.adq?.precio != null ? fmt(a.adq.precio) : ""}"></label>
+      <label class="field">Valor catastral<input type="text" inputmode="decimal" class="money" data-ak="total" value="${a.cat?.total != null ? fmt(a.cat.total) : ""}"></label>
+      <label class="field">V. c. construcción<input type="text" inputmode="decimal" class="money" data-ak="constr" value="${a.cat?.constr != null ? fmt(a.cat.constr) : ""}"></label>
+    </div><button type="button" class="ghost danger" data-adel="${i}" aria-label="Quitar accesorio">✕</button></div>`).join("") : `<p class="note">Si el garaje o el trastero se alquilan con la vivienda, van aquí y suman a su amortización. Si tienen otro inquilino, créalos como inmueble aparte.</p>`; }
+  const readAcc = () => document.querySelectorAll("#accRows [data-ai]").forEach(r => { const a = m.accesorios[+r.dataset.ai]; const g = k => r.querySelector(`[data-ak="${k}"]`).value.trim();
+    a.tipo = g("tipo"); a.rc = g("rc").toUpperCase().replace(/\s/g, ""); a.adq = { ...(a.adq || {}), precio:parseEs(g("precio")) }; a.cat = { ...(a.cat || {}), total:parseEs(g("total")), constr:parseEs(g("constr")) }; });
   const readTit = () => { document.querySelectorAll("#titRows [data-ti]").forEach(r => { const x = m.tit[+r.dataset.ti]; x.t = r.querySelector('[data-tk="t"]').value; x.pct = parseEs(r.querySelector('[data-tk="pct"]').value) || 0; x.reg = r.querySelector('[data-tk="reg"]').value; }); };
   const refresh = () => {
     readTit();
     const s = m.tit.reduce((a, x) => a + (+x.pct || 0), 0);
     $("titSum").innerHTML = `Suma: <b class="num" style="color:var(${Math.abs(s - 100) < 0.01 ? "--ok" : "--bad"})">${fmt(s, 2)} %</b>`;
-    const tmp = { adq:{ precio:money("m-adqp"), gastos:money("m-adqg") }, cat:{ total:money("m-vct"), constr:money("m-vcc") } }, a = amortInm(tmp);
+    readAcc();
+    const tmp = { adq:{ precio:money("m-adqp"), gastos:money("m-adqg") }, cat:{ total:money("m-vct"), constr:money("m-vcc") }, accesorios:m.accesorios }, a = amortInm(tmp);
     $("amCalc").innerHTML = a ? `Amortización del inmueble (3 %): <b>${eur(a.anual)}</b> al año, sobre <b>${eur(a.base)}</b> (${a.porCoste ? "parte de construcción del coste de adquisición" : "valor catastral de la construcción"}${a.pctConstr ? `; la construcción es el ${fmt(a.pctConstr * 100, 1)} % del valor catastral` : ""}). Es una estimación: la afinamos en la fase 2 con los días de alquiler y las mejoras.`
       : "Con el valor catastral de la construcción te calculo la amortización anual del 3 %.";
   };
@@ -668,13 +691,16 @@ function editInm(id){
     if (!val("m-alias")){ $("m-alias").focus(); toast("Ponle un nombre al inmueble."); return false; }
     Object.assign(m, { alias:val("m-alias"), tipo:val("m-tipo"), situacion:val("m-sit"), direccion:val("m-dir"), cp:val("m-cp"), municipio:val("m-mun"), provincia:val("m-prov"), rc:val("m-rc").toUpperCase().replace(/\s/g, ""), notas:val("m-notas") });
     m.adq = { forma:val("m-adq"), fecha:val("m-adqf"), precio:money("m-adqp"), gastos:money("m-adqg") };
-    m.cat = { total:money("m-vct"), constr:money("m-vcc"), anio:val("m-vca"), revisado:$("m-rev").checked };
+    m.cat = { total:money("m-vct"), constr:money("m-vcc"), ref:money("m-vref"), anio:val("m-vca"), revisado:$("m-rev").checked };
+    readAcc();
     if (isNew) db.inmuebles.push(m); else db.inmuebles[db.inmuebles.findIndex(x => x.id === m.id)] = m;
     toast("✓ Inmueble guardado");
   }, isNew ? "" : `<button type="button" class="danger" id="delInm">Eliminar</button>`);
   refresh();
-  $("dlgBody").oninput = e => { if (e.target.closest("#titRows") || /^m-(adq|vc)/.test(e.target.id)) refresh(); };
+  $("dlgBody").oninput = e => { if (e.target.closest("#titRows") || e.target.closest("#accRows") || /^m-(adq|vc)/.test(e.target.id)) refresh(); };
   $("dlgBody").onchange = $("dlgBody").oninput;
+  $("accAdd").onclick = () => { readAcc(); m.accesorios.push({ id:"a-" + uid(), tipo:"garaje", rc:"", adq:{}, cat:{} }); $("accRows").innerHTML = accRows(); };
+  $("accRows").onclick = e => { const b = e.target.closest("[data-adel]"); if (!b) return; readAcc(); m.accesorios.splice(+b.dataset.adel, 1); $("accRows").innerHTML = accRows(); refresh(); };
   $("titAdd").onclick = () => { readTit(); const used = new Set(m.tit.map(x => x.t)); const t = db.titulares.find(t => !used.has(t.id)) || db.titulares[0]; m.tit.push({ t:t.id, pct:0, reg:"ganancial" }); $("titRows").innerHTML = titRows(); refresh(); };
   $("titRows").onclick = e => { const b = e.target.closest("[data-tdel]"); if (!b) return; readTit(); m.tit.splice(+b.dataset.tdel, 1); $("titRows").innerHTML = titRows(); refresh(); };
   if (!isNew) armDelete($("delInm"), () => {
@@ -1205,6 +1231,7 @@ function renderAmort(){
     h += `<div class="panel"><div class="panel-head"><h2>${esc(m.alias)}</h2><span class="chip acc">${eur(ai.v + tm)} en ${curYear}</span></div>
       <div class="card" style="background:var(--bg)"><div class="card-head"><h3>🏠 Inmueble (3 %)</h3><button type="button" class="ghost" data-am-inm="${m.id}">✎ Ajustar</button></div>
         <dl class="kv"><dt>Cómo se calcula</dt><dd>${esc(ai.fuente)}</dd>${ai.anual ? `<dt>Al año completo</dt><dd class="num">${eur(ai.anual)}</dd>` : ""}${ai.dias != null ? `<dt>Días alquilado</dt><dd class="num">${ai.dias} de ${ai.tot}</dd>` : ""}<dt><b>${curYear}</b></dt><dd class="num"><b>${eur(ai.v)}</b></dd></dl>
+        ${(() => { const c = amortInm(m); return ai.fuente === "Cifra fija" && c && Math.abs(c.anual - ai.anual) > Math.max(5, ai.anual * 0.05) ? `<p class="note" style="color:var(--warn)">⚠️ Con los datos de la ficha (compra y catastro${c.partes > 1 ? ", con sus accesorios" : ""}) saldría <b>${eur(c.anual)}</b> al año, ${c.anual > ai.anual ? "más" : "menos"} que la cifra fija. Revísalo con «✎ Ajustar».</p>` : ""; })()}
         ${ai.fuente === "Faltan datos" ? `<p class="note">Pon el valor catastral de la construcción en la ficha del inmueble, o la cifra fija que declaras («✎ Ajustar»).</p>` : ""}</div>
       <h3 style="margin:14px 0 8px">🛋️ Muebles, electrodomésticos y mejoras</h3>
       ${filas.length ? `<ul class="mini">${filas.map(({ b, e }) => `<li style="align-items:flex-start"><div class="grow" style="white-space:normal"><div><b>${esc(b.concepto)}</b> ${chip(e)}${b.docs?.length ? " 📎" : ""}</div><div class="sub">${b.alta ? (b.alta.endsWith("-01-01") && b.fechaAprox ? b.alta.slice(0, 4) : fdate(b.alta)) : "Sin fecha"} · ${eur(b.importe)} · ${fmt(b.coef, b.coef % 1 ? 2 : 0)} %${e.est === "baja" ? ` · baja ${fdate(b.baja.fecha)}${e.pendBaja > 0.01 ? `, quedaron ${eur(e.pendBaja)} sin amortizar` : ""}` : ` · amortizado ${eur(e.acum + e.este)} · quedan ${eur(e.pend)}`}</div></div><span class="num" style="white-space:nowrap;font-weight:600">${eur(e.este)}</span><button type="button" class="ghost" data-bien="${b.id}" aria-label="Editar">✎</button></li>`).join("")}</ul>` : `<p class="note">No hay muebles ni mejoras. Añádelos o importa tu hoja.</p>`}
@@ -1561,7 +1588,7 @@ function paraMiRenta(){
     years[y] = { declaraciones:fiscal(y).map(dc => ({ id:dc.id, nombre:dc.nombre, inmuebles:dc.inms.map(x => {
       const ct = x.cts.find(c => c.estado === "vigente") || x.cts[0];
       return { id:x.m.id, nombre:x.m.alias, rc:x.m.rc || "", ing:x.r.ingresos, intRep:x.r.limDed, gastos:x.r.otros, amort:Math.round((x.r.amI + x.r.amM) * 100) / 100, amortInm:x.r.amI, amortMue:x.r.amM,
-        pct:x.pct, red:ct && ct.habitual && x.m.tipo === "vivienda" ? ct.red : "0", valor:Math.max(+x.m.cat.total || 0, +x.m.adq.precio || 0) || null, imputacion:x.r.imputacion, exceso:x.r.exceso, dias:x.r.dias };
+        pct:x.pct, red:ct && ct.habitual && x.m.tipo === "vivienda" ? ct.red : "0", valor:[x.m, ...(x.m.accesorios || [])].reduce((a, o) => a + Math.max(+o.cat?.total || 0, +o.cat?.ref || 0, +o.adq?.precio || 0), 0) || null, imputacion:x.r.imputacion, exceso:x.r.exceso, dias:x.r.dias };
     }) })) };
   }
   return { app:"miAlquiler-miRenta", v:1, at:new Date().toISOString(), tipo:db.declaracion.tipo, years };
@@ -1585,6 +1612,7 @@ function renderRenta(){
       h += `<div class="card" style="margin-bottom:12px"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${esc([m.direccion, [m.cp, m.municipio].filter(Boolean).join(" ")].filter(Boolean).join(", ") || "Sin dirección")}</div></div><span class="chip">${fmt(x.pct, x.pct % 1 ? 2 : 0)} %</span></div>
         <dl class="kv">
           <dt>Referencia catastral</dt><dd class="num">${esc(m.rc || "—")}</dd>
+          ${(m.accesorios || []).map(a => `<dt>${esc(a.tipo === "trastero" ? "Trastero" : "Garaje")} (accesorio)</dt><dd class="num">${esc(a.rc || "—")}</dd>`).join("")}
           <dt>Uso en ${curYear}</dt><dd>${situ}${r.supuesto ? " (sin fecha de inicio)" : ""}</dd>
           <dt>Titularidad</dt><dd>${m.tit.map(t => `${esc(tById(t.t)?.nombre || "?")} ${fmt(t.pct, 0)} % (${esc(label(REGIMEN, t.reg))})`).join(" · ")}</dd>
           <dt>NIF arrendatarios</dt><dd class="num">${x.nifs.length ? x.nifs.map(esc).join(", ") : '<span class="chip warn">Faltan</span>'}</dd>
@@ -2014,6 +2042,7 @@ async function procesar(files){
       if (ya){ msgs.push(`«${f.name}» ya estaba ${ya.pid ? "en la bandeja" : "guardado"}: no lo vuelvo a leer.`); continue; }
       const r = await readFile(f);
       const joined = r.lines.join(" "), defY = fileYear(joined);
+      if (esFicha(joined)){ const ok = await importarFichas(r.kind === "pdf" ? { items:await pdfXY(await f.arrayBuffer()) } : { table:r.table || [] }, f.name); msgs.push(ok ? `${f.name}: es la hoja de fichas de las viviendas; revisa a dónde va cada columna.` : `${f.name}: parece la hoja de fichas, pero no he sabido leerla.`); continue; }
       const movs = r.kind === "sheet" ? movsFromTable(r.table, defY) || [] : r.kind === "pdf" ? movsFromItems(r.items, defY) : [];
       if (movs.length >= 3){
         const file = { id:"d-" + uid(), name:f.name, type:f.type, size:f.size, hash, added:todayIso(), blob:f, kind:"extracto" };
@@ -2175,6 +2204,210 @@ document.addEventListener("drop", e => { const z = e.target.closest?.("#dropZone
 document.addEventListener("keydown", e => { if (e.target.id === "dropZone" && (e.key === "Enter" || e.key === " ")){ e.preventDefault(); $("bjFile").click(); } });
 // Archivos compartidos desde otra app (si el sistema lo permite) o pegados
 document.addEventListener("paste", e => { if (!$("v-bandeja") || $("v-bandeja").hidden) return; const fs = [...(e.clipboardData?.files || [])]; if (fs.length){ e.preventDefault(); procesar(fs); } });
+
+// =====================================================================
+// Hoja de fichas de las viviendas (una columna por inmueble): PDF, Excel o Google Sheets
+// =====================================================================
+const RE_RC = /\b[0-9A-Z]{7}[A-Z]{2}[0-9A-Z]{5}[0-9A-Z]{4}[A-Z]{2}\b/;
+const FICHA = [
+  ["tipo", /^tipo$/], ["rc", /referencia catastral/], ["fcompra", /fecha (de )?(compra|adquisicion)/], ["tcompra", /total (de )?compra/], ["vcompra", /valor (de )?compra|precio (de )?compra/], ["gcompra", /gastos (de )?compra/],
+  ["vcc", /valor catastral constru|catastral (de la )?construccion/], ["vref", /catastral de referencia|valor de referencia/], ["vc", /^valor catastral( total)?$/],
+  ["nif", /\bnif\b|\bdni\b/], ["fcontrato", /fecha (de )?(firma|contrato)/], ["nombre", /nombre/], ["tel", /telefono|movil|tlf/], ["duracion", /duracion/], ["renov", /renovacion|vencimiento|fin (del )?contrato/],
+  ["ipc", /subida|ipc|actualizacion/], ["renta", /renta|alquiler mensual|mensualidad/], ["notas", /notas|observaciones/]
+];
+const fichaCampo = lab => { const t = norm(lab); if (!t) return null; for (const [k, re] of FICHA) if (re.test(t)) return k; return null; };
+const esFicha = txt => { const t = norm(txt); return (String(txt).match(new RegExp(RE_RC.source, "g")) || []).length >= 2 && /referencia catastral/.test(t) && /valor catastral|fecha compra|renta actual|nif inquilino/.test(t); };
+
+// PDF con posiciones (x, y) para leer la tabla por columnas
+async function pdfXY(buf){
+  await needPdf();
+  const pdf = await pdfjsLib.getDocument({ data:buf.slice(0) }).promise, out = [];
+  for (let p = 1; p <= pdf.numPages; p++){
+    const page = await pdf.getPage(p), tc = await page.getTextContent(), off = (p - 1) * 10000;
+    for (const it of tc.items) if (it.str && it.str.trim()) out.push({ x:it.transform[4], y:off + (10000 - it.transform[5]), w:it.width || 0, s:it.str.trim() });
+  }
+  return out;
+}
+// De los trozos de texto del PDF a una rejilla: [{ label, vals:[texto por columna] }] y los nombres de las columnas
+function pdfAGrid(items){
+  const rcs = items.filter(i => RE_RC.test(i.s)).sort((a, b) => a.x - b.x);
+  if (rcs.length < 2) return null;
+  const rcY = rcs[0].y, cols = rcs.filter(i => Math.abs(i.y - rcY) < 4).map(i => i.x + i.w / 2);
+  const x0 = Math.min(...rcs.filter(i => Math.abs(i.y - rcY) < 4).map(i => i.x)) - 8;
+  const col = it => { const c = it.x + it.w / 2; let b = 0; cols.forEach((v, i) => { if (Math.abs(v - c) < Math.abs(cols[b] - c)) b = i; }); return b; };
+  // Líneas por altura
+  const lines = [];
+  for (const it of items.sort((a, b) => a.y - b.y || a.x - b.x)){
+    let l = lines.find(l => Math.abs(l.y - it.y) < 3); if (!l){ l = { y:it.y, lab:[], val:[] }; lines.push(l); }
+    (it.x + it.w <= x0 + 4 ? l.lab : l.val).push(it);
+  }
+  lines.sort((a, b) => a.y - b.y);
+  const firstLab = lines.find(l => l.lab.length && l.val.length && fichaCampo(l.lab.map(i => i.s).join(" ")));
+  const head = lines.filter(l => firstLab && l.y < firstLab.y - 2 && l.val.length);
+  const names = cols.map(() => []);
+  for (const l of head){ if (l.val.length === 1 && cols.length >= 3) continue; for (const it of l.val) names[col(it)].push(it.s); }
+  // Filas: cada línea con etiqueta y valores es una fila; una etiqueta de dos líneas se completa con la de encima
+  const body = lines.filter(l => !firstLab || l.y >= firstLab.y - 2);
+  const anchors = [];
+  body.forEach((l, i) => {
+    if (!l.lab.length || !l.val.length) return;
+    let lab = l.lab.map(x => x.s).join(" ");
+    if (!fichaCampo(lab)){ const prev = body[i - 1]; if (prev && prev.lab.length && !prev.val.length) lab = prev.lab.map(x => x.s).join(" ") + " " + lab; }
+    anchors.push({ y:l.y, label:lab, parts:[l] });
+  });
+  // Etiquetas partidas en dos líneas («VALOR CATASTRAL» + «CONSTRUC.»): se pegan a la fila de encima si así cambian de campo
+  body.forEach((l, i) => {
+    if (!l.lab.length || l.val.length) return;
+    const t = l.lab.map(x => x.s).join(" ");
+    if (fichaCampo(t)) return;
+    const up = anchors.filter(a => a.y < l.y && l.y - a.y < 16).sort((a, b) => b.y - a.y)[0];
+    if (up){ const k0 = fichaCampo(up.label), k1 = fichaCampo(up.label + " " + t); if (k1 && k1 !== k0) up.label += " " + t; }
+  });
+  for (const l of body.filter(l => l.val.length && !l.lab.length)){
+    if (!anchors.length) break;
+    const a = anchors.reduce((b, x) => Math.abs(x.y - l.y) < Math.abs(b.y - l.y) ? x : b);
+    if (Math.abs(a.y - l.y) < 26) a.parts.push(l);
+  }
+  const rows = anchors.map(a => { const vals = cols.map(() => []); for (const p of a.parts.sort((x, y) => x.y - y.y)) for (const it of p.val) vals[col(it)].push(it.s); return { label:a.label, vals:vals.map(v => v.join(" ").replace(/\s+/g, " ").trim()) }; });
+  return { names:names.map(n => n.join(" ").replace(/\s+/g, " ").trim()), rows };
+}
+// Excel / Google Sheets: la etiqueta en la primera columna con texto y un inmueble por columna
+function tablaAGrid(tab){
+  const ri = tab.findIndex(r => r.some(c => RE_RC.test(String(c))) && r.filter(c => RE_RC.test(String(c))).length >= 2);
+  if (ri < 0) return null;
+  const idx = tab[ri].map((c, i) => RE_RC.test(String(c)) ? i : -1).filter(i => i >= 0);
+  const lc = tab[ri].findIndex(c => /referencia/i.test(String(c)));
+  const L = lc >= 0 ? lc : 0;
+  const first = tab.findIndex(r => fichaCampo(String(r[L] || "")));
+  const names = idx.map(i => tab.slice(0, first < 0 ? ri : first).map(r => String(r[i] ?? "").trim()).filter((v, k, arr) => v).join(" "));
+  const rows = tab.filter(r => String(r[L] || "").trim()).map(r => ({ label:String(r[L]), vals:idx.map(i => String(r[i] ?? "").trim()) }));
+  return { names, rows };
+}
+// Rejilla → una ficha por columna
+function gridAFichas(g){
+  const n = g.names.length, fichas = g.names.map(name => ({ name }));
+  for (const r of g.rows){ const k = fichaCampo(r.label); if (!k) continue; r.vals.forEach((v, i) => { if (i < n && v && v !== "-" && !fichas[i][k]) fichas[i][k] = v; }); }
+  return fichas.filter(f => f.rc || f.tipo).map(f => {
+    const t = norm(f.tipo || ""), nn = norm(f.name);
+    const tipo = /garag|garaj|parking|aparcamiento|plaza/.test(t) ? "garaje" : /trastero/.test(t) ? "trastero" : /local/.test(t) ? "local" : /accesorio/.test(t) ? (/\bt\b/.test(nn) ? "trastero" : "garaje") : "vivienda";
+    const nifs = [...String(f.nif || "").toUpperCase().matchAll(/\b(\d{8}[A-Z]|[XYZ]\d{7}[A-Z])\b/g)].map(m => m[1]);
+    const tels = String(f.tel || "").split(/[^\d+]+/).filter(x => x.replace(/\D/g, "").length >= 9);
+    const subida = norm(f.ipc || ""); const mesSub = MESES.findIndex(mm => new RegExp("subida (en |de )?" + mm).test(subida));
+    const renov = getDateIso(f.renov || ""), fc = getDateIso(f.fcontrato || ""), fco = getDateIso(f.fcompra || "");
+    const dur = (String(f.duracion || "").match(/(\d+)\s*a/gi) || []).map(x => parseInt(x)); const sinContrato = /\bs\/?c\b|sin contrato/i.test(f.duracion || "");
+    const muni = /malaga/.test(norm(f.name)) ? "Málaga" : /madrid/.test(norm(f.name)) ? "Madrid" : "";
+    const money = v => { const x = parseAny(String(v || "").replace(/€/g, "")); return isNaN(x) ? null : Math.round(x * 100) / 100; };
+    return {
+      nombre:f.name.replace(/\s+/g, " ").trim(), tipo, accesorio:/accesorio/.test(t), habitual:/habitual/.test(t), arrendada:/arrendad/.test(t),
+      rc:(String(f.rc || "").toUpperCase().match(RE_RC) || [""])[0], municipio:muni,
+      fcompra:fco, vcompra:money(f.vcompra), gcompra:money(f.gcompra), vc:money(f.vc), vcc:money(f.vcc), vref:money(f.vref),
+      nifs, nombreInq:String(f.nombre || "").trim(), tels, fcontrato:fc, renov, duracion:dur.length ? Math.max(...dur) : null, sinContrato,
+      mesSubida:mesSub >= 0 ? mesSub + 1 : null, ipcTxt:String(f.ipc || "").trim(), renta:money(f.renta), notas:String(f.notas || "").trim()
+    };
+  });
+}
+// Lev. para casar «Azpiazu» con «Aspiazu»
+function lev(a, b){ const m = a.length, n = b.length, d = Array.from({ length:m + 1 }, (_, i) => [i, ...Array(n).fill(0)]); for (let j = 1; j <= n; j++) d[0][j] = j; for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[m][n]; }
+const parecido = (a, b) => { const A = words(a), B = words(b); let s = 0; for (const x of A) if (B.some(y => y === x || (x.length >= 6 && y.length >= 6 && lev(x, y) <= 1))) s++; return s; };
+function destinoFicha(f, todas){
+  if (f.rc){ const m = db.inmuebles.find(m => m.rc === f.rc || (m.accesorios || []).some(a => a.rc === f.rc)); if (m) return m.rc === f.rc ? m.id : "acc:" + m.id; }
+  // Accesorio sin inquilino propio: va con la vivienda de la misma finca o calle
+  if (f.accesorio && !f.renta && !f.nifs.length && !f.nombreInq){
+    const v = todas.find(o => o !== f && !o.accesorio && (o.rc && f.rc && o.rc.slice(0, 14) === f.rc.slice(0, 14) || parecido(o.nombre, f.nombre) >= 1));
+    if (v) return "accF:" + todas.indexOf(v);
+  }
+  if (f.habitual) return "nuevo";
+  let best = null, bs = 0;
+  for (const m of db.inmuebles){ const s = parecido(f.nombre, m.alias + " " + (m.direccion || "")); if (s > bs){ bs = s; best = m; } }
+  // Un garaje con su propio inquilino es otro inmueble: solo se casa con uno existente del mismo tipo
+  if (best && bs >= 1 && (best.tipo === (f.tipo === "trastero" ? "garaje" : f.tipo) || (!f.accesorio && best.tipo === "vivienda"))) return best.id;
+  if (f.fcontrato && f.fcontrato < "1985-05-09"){ const m = db.inmuebles.find(m => ctsOf(m).some(c => c.regimen === "antiguo")); if (m) return m.id; }
+  return "nuevo";
+}
+const regimenPorFecha = f => !f ? "lau19" : f < "1985-05-09" ? "antiguo" : f < "2019-03-06" ? "lau94" : f < "2023-05-26" ? "lau19" : "ley23";
+function aplicarFicha(f, m, opt){
+  const set = (o, k, v) => { if (v != null && v !== "") o[k] = v; };
+  set(m, "rc", f.rc); if (f.municipio) set(m, "municipio", m.municipio || f.municipio); if (f.municipio && !m.provincia) m.provincia = f.municipio;
+  if (!m.direccion || opt.dir) m.direccion = f.nombre.replace(/\b(MADRID|MALAGA|MÁLAGA)\b/gi, "").replace(/\s+/g, " ").trim();
+  m.tipo = f.tipo === "trastero" ? "garaje" : f.tipo; if (f.habitual) m.situacion = "habitual"; else if (f.arrendada || f.renta) m.situacion = "arrendado";
+  m.adq ||= {}; if (f.fcompra) m.adq.fecha = f.fcompra; if (f.vcompra != null) m.adq.precio = f.vcompra; if (f.gcompra != null) m.adq.gastos = f.gcompra; m.adq.forma ||= "compra";
+  m.cat ||= {}; set(m.cat, "total", f.vc); set(m.cat, "constr", f.vcc); set(m.cat, "ref", f.vref);
+  if (f.habitual || (!f.renta && !f.nifs.length && !f.fcontrato && !f.nombreInq)) return 0;
+  // Contrato
+  let c = ctsOf(m).find(c => c.estado === "vigente");
+  if (!c){ c = { id:"c-" + uid(), inmueble:m.id, estado:"vigente", inquilinos:[], firma:"", inicio:"", duracion:5, fin:"", renta:null, diaPago:"", indice:"IPC", actRef:"", ultAct:"", fijo:null, historial:[], fianza:{}, regimen:"lau19", habitual:true, red:"0.6", docs:[], cartas:[], prorrogas:[], notas:"" }; db.contratos.push(c); }
+  const nq = Math.max(f.nifs.length, f.nombreInq ? 1 : 0, c.inquilinos.length || 1);
+  while (c.inquilinos.length < nq) c.inquilinos.push({ nombre:"", nif:"", tel:"", email:"" });
+  f.nifs.forEach((n, i) => c.inquilinos[i].nif = n);
+  if (f.nombreInq) c.inquilinos[0].nombre = f.nombreInq;
+  f.tels.forEach((t, i) => { if (c.inquilinos[Math.min(i, c.inquilinos.length - 1)] && !c.inquilinos[Math.min(i, c.inquilinos.length - 1)].tel) c.inquilinos[Math.min(i, c.inquilinos.length - 1)].tel = t; });
+  if (f.fcontrato){ c.firma = f.fcontrato; c.inicio = f.fcontrato; c.regimen = regimenPorFecha(f.fcontrato); c.red = c.regimen === "ley23" ? "0.5" : "0.6"; }
+  if (f.renov){ c.fin = f.renov; }
+  if (f.duracion) c.duracion = f.duracion;
+  if (c.regimen === "antiguo"){ c.duracion = 0; c.fin = ""; }
+  if (f.renta != null) c.renta = f.renta;
+  if (f.mesSubida){ const y0 = +(c.inicio || todayIso()).slice(0, 4); c.actRef = `${y0}-${String(f.mesSubida).padStart(2, "0")}-01`; c.indice = c.indice === "ninguno" ? "IPC" : c.indice; }
+  const se = (f.notas.match(/sub(io|ió|ida).*?(20\d{2})/i) || [])[2];
+  if (se && c.actRef) c.ultAct = `${se}-${c.actRef.slice(5)}`;
+  if (m.tipo !== "vivienda"){ c.habitual = false; c.red = "0"; }
+  if (f.sinContrato) c.notas = [c.notas, "Sin contrato escrito."].filter(Boolean).join(" ");
+  if (f.ipcTxt && !/avisar/i.test(c.notas || "")) c.notas = [c.notas, f.ipcTxt].filter(Boolean).join(" ");
+  if (f.notas) c.notas = [c.notas, f.notas].filter(Boolean).join(" ");
+  return 1;
+}
+async function importarFichas(fuente, nombreArchivo){
+  const g = fuente.items ? pdfAGrid(fuente.items) : tablaAGrid(fuente.table);
+  const fichas = g ? gridAFichas(g) : [];
+  if (!fichas.length){ toast("No he sabido leer las columnas de esa hoja."); return false; }
+  const dest = fichas.map(f => destinoFicha(f, fichas));
+  // Un mismo inmueble no puede recibir dos columnas: se queda la vivienda, la otra pasa a inmueble nuevo
+  dest.forEach((d, i) => { if (d === "nuevo" || d.startsWith("acc")) return; const j = dest.findIndex((x, k) => k !== i && x === d); if (j >= 0){ const quita = fichas[i].accesorio ? i : fichas[j].accesorio ? j : Math.max(i, j); dest[quita] = "nuevo"; } });
+  const optsDest = (i, v) => `<option value="no">No importar</option><option value="nuevo"${v === "nuevo" ? " selected" : ""}>Inmueble nuevo</option>` +
+    db.inmuebles.map(m => `<option value="${m.id}"${v === m.id ? " selected" : ""}>${esc(m.alias)}</option>`).join("") +
+    db.inmuebles.map(m => `<option value="acc:${m.id}"${v === "acc:" + m.id ? " selected" : ""}>Accesorio de ${esc(m.alias)}</option>`).join("") +
+    fichas.map((o, j) => j !== i && !o.accesorio ? `<option value="accF:${j}"${v === "accF:" + j ? " selected" : ""}>Accesorio de «${esc(o.nombre)}»</option>` : "").join("");
+  const resumen = f => [f.rc && `RC ${f.rc}`, f.vc && `catastral ${eur(f.vc)}`, f.vcc && `construcción ${eur(f.vcc)}`, f.vcompra && `compra ${eur(f.vcompra)}${f.fcompra ? " (" + fdate(f.fcompra) + ")" : ""}`, f.renta && `renta ${eur(f.renta)}`, f.nifs.length && `${f.nifs.length} NIF`, f.fcontrato && `contrato ${fdate(f.fcontrato)}`, f.mesSubida && `subida en ${MESES[f.mesSubida - 1]}`].filter(Boolean).join(" · ");
+  openDlg("Fichas de las viviendas", `<p class="note">He leído ${fichas.length} columnas de «${esc(nombreArchivo)}». Comprueba a dónde va cada una: lo que traiga la hoja sustituye a lo que hay en la app; lo que no traiga, se queda igual.</p>` +
+    fichas.map((f, i) => `<fieldset><legend>${esc(f.nombre || "Columna " + (i + 1))}</legend>
+      <div class="chips"><span class="chip acc">${esc(f.habitual ? "Vivienda habitual" : (f.accesorio ? "Accesorio · " : "") + label(TIPOS_INM, f.tipo === "trastero" ? "garaje" : f.tipo) + (f.tipo === "trastero" ? " (trastero)" : ""))}</span>${f.nombreInq || f.nifs.length ? `<span class="chip">👤 ${esc(f.nombreInq || f.nifs.join(", "))}</span>` : ""}</div>
+      <p class="note">${esc(resumen(f)) || "Sin datos"}</p>
+      <label class="field">Va a<select id="fd-${i}">${optsDest(i, dest[i])}</select></label></fieldset>`).join(""), () => {
+    let ni = 0, na = 0, nc = 0; const creado = {};
+    const elegido = fichas.map((f, i) => val("fd-" + i));
+    const nuevoInm = f => ({ id:"i-" + uid(), alias:(f.habitual ? "Vivienda habitual · " : f.tipo !== "vivienda" ? "Garaje · " : "") + (f.nombre.replace(/\b(MADRID|MALAGA|MÁLAGA)\b/gi, "").replace(/^(CL|C\/|CALLE|AV|AVDA)\.?\s+/i, "").replace(/\s+/g, " ").trim() || "Inmueble"), tipo:"vivienda", direccion:"", cp:"", municipio:"", provincia:"", rc:"", situacion:"arrendado",
+      tit:db.inmuebles[0] ? JSON.parse(JSON.stringify(db.inmuebles[0].tit)) : db.titulares.map(t => ({ t:t.id, pct:100 / Math.max(1, db.titulares.length), reg:"ganancial" })), adq:{ forma:"compra" }, cat:{ revisado:true }, notas:"", accesorios:[] });
+    // Primero inmuebles (para que los accesorios tengan dónde ir)
+    fichas.forEach((f, i) => {
+      const d = elegido[i]; if (d === "no" || d.startsWith("acc")) return;
+      let m = d === "nuevo" ? null : iById(d);
+      if (!m){ m = nuevoInm(f); db.inmuebles.push(m); ni++; }
+      nc += aplicarFicha(f, m, { dir:d === "nuevo" }); creado[i] = m;
+    });
+    fichas.forEach((f, i) => {
+      const d = elegido[i]; if (!d.startsWith("acc")) return;
+      const m = d.startsWith("accF:") ? creado[+d.slice(5)] || null : iById(d.slice(4)); if (!m) return;
+      m.accesorios ||= [];
+      let a = m.accesorios.find(x => x.rc && x.rc === f.rc);
+      if (!a){ a = { id:"a-" + uid(), tipo:f.tipo === "trastero" ? "trastero" : "garaje", rc:"", adq:{}, cat:{} }; m.accesorios.push(a); }
+      Object.assign(a, { tipo:f.tipo === "trastero" ? "trastero" : "garaje", rc:f.rc || a.rc, nombre:f.nombre });
+      a.adq = { ...a.adq, ...(f.fcompra ? { fecha:f.fcompra } : {}), ...(f.vcompra != null ? { precio:f.vcompra } : {}), ...(f.gcompra != null ? { gastos:f.gcompra } : {}) };
+      a.cat = { ...a.cat, ...(f.vc != null ? { total:f.vc } : {}), ...(f.vcc != null ? { constr:f.vcc } : {}), ...(f.vref != null ? { ref:f.vref } : {}) };
+      na++;
+    });
+    toast(`✓ ${ni ? `${ni} ${plural(ni, "inmueble nuevo", "inmuebles nuevos")}, ` : ""}${na} ${plural(na, "accesorio", "accesorios")} y ${nc} ${plural(nc, "contrato actualizado", "contratos actualizados")}.`);
+  });
+  $("dlgSave").textContent = "Importar";
+  $("dlg").addEventListener("close", () => $("dlgSave").textContent = "Guardar", { once:true });
+  return true;
+}
+async function importarFichasArchivo(f){
+  try {
+    if (/\.pdf$/i.test(f.name) || f.type === "application/pdf") return await importarFichas({ items:await pdfXY(await f.arrayBuffer()) }, f.name);
+    const r = await readFile(f); return await importarFichas({ table:r.table || [] }, f.name);
+  } catch(e){ toast("No he podido leer la hoja: " + e.message); return false; }
+}
+document.addEventListener("click", e => { if (e.target.closest("#impFichas")) $("impFichasFile").click(); });
+document.addEventListener("change", e => { if (e.target.id === "impFichasFile"){ const f = e.target.files[0]; e.target.value = ""; if (f) importarFichasArchivo(f); } });
 
 // =====================================================================
 // Copia de seguridad
