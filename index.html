@@ -1,0 +1,1104 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Gestión de las viviendas alquiladas: inmuebles, inquilinos, contratos, avisos de renovación y de subida del IPC. Todo se guarda en tu dispositivo y, si quieres, en tu Google Drive.">
+<meta name="theme-color" content="#A8553A">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mi Alquiler">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/favicon-64.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>Mi Alquiler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+:root{
+  --bg:#F3EFEA; --paper:#FCFAF7; --ink:#1F1A17; --muted:#6B625B; --line:#DDD4CB;
+  --accent:#A8553A; --accent-soft:#F2E1D9; --accent-ink:#FCFAF7;
+  --ok:#2B7A4F; --ok-soft:#DDEFE4; --warn:#9A6A12; --warn-soft:#F5EBD3; --bad:#A3412F; --bad-soft:#F6E3DE; --info:#1D5D7C; --info-soft:#DCE8EE;
+  --f-display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --f-body:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#141110; --paper:#1E1A18; --ink:#ECE5DF; --muted:#A69A90; --line:#3A322D;
+    --accent:#E0896A; --accent-soft:#3A2620; --accent-ink:#1E1A18;
+    --ok:#6CC495; --ok-soft:#1C3328; --warn:#E0B65A; --warn-soft:#352C17; --bad:#E58A75; --bad-soft:#3A2420; --info:#72B3D3; --info-soft:#1C3441;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#141110; --paper:#1E1A18; --ink:#ECE5DF; --muted:#A69A90; --line:#3A322D;
+  --accent:#E0896A; --accent-soft:#3A2620; --accent-ink:#1E1A18;
+  --ok:#6CC495; --ok-soft:#1C3328; --warn:#E0B65A; --warn-soft:#352C17; --bad:#E58A75; --bad-soft:#3A2420; --info:#72B3D3; --info-soft:#1C3441;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{scroll-padding-top:70px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 var(--f-body);padding-bottom:env(safe-area-inset-bottom,0px)}
+.wrap{max-width:1100px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 64px max(16px,env(safe-area-inset-left,0px))}
+header{display:grid;gap:6px;margin-bottom:16px}
+.toprow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.eyebrow{font:500 12px var(--f-num);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+h1{font:700 clamp(30px,6vw,44px)/1.05 var(--f-display);margin:0;text-wrap:balance}
+.lede{color:var(--muted);max-width:62ch;margin:2px 0 0}
+h2{font:600 20px/1.2 var(--f-display);margin:0;text-wrap:balance}
+h3{font:600 16px/1.3 var(--f-display);margin:0}
+.note{color:var(--muted);font-size:14px;margin:0}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+
+/* Pestañas */
+nav.tabs{position:sticky;top:0;z-index:5;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);margin:0 -16px 18px;padding:8px 16px;border-bottom:1px solid var(--line)}
+nav.tabs::-webkit-scrollbar{display:none}
+nav.tabs button{flex:0 0 auto;border:1px solid transparent;background:transparent;color:var(--muted);font:600 15px var(--f-body);padding:7px 12px;border-radius:999px;cursor:pointer;white-space:nowrap}
+nav.tabs button[aria-selected="true"]{background:var(--accent);color:var(--accent-ink)}
+nav.tabs .badge{display:inline-block;min-width:18px;padding:0 5px;margin-left:4px;border-radius:99px;background:var(--bad);color:#fff;font:600 11px/18px var(--f-num);text-align:center}
+
+/* Paneles */
+.view{display:grid;gap:18px}
+.panel{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:18px;min-width:0}
+.panel-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.cards{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:10px;align-content:start;min-width:0}
+.card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.card-head h3{font-size:18px}
+.sub{color:var(--muted);font-size:14px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:14px;margin:0}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;text-align:right;min-width:0;overflow-wrap:anywhere}
+.tiles{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.tile{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px}
+.tile .k{font:500 11px var(--f-num);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.tile .v{font:600 24px/1.2 var(--f-num);margin-top:4px}
+.empty{color:var(--muted);text-align:center;padding:24px 10px;border:1.5px dashed var(--line);border-radius:12px}
+
+/* Chips */
+.chip{display:inline-block;font:600 11px var(--f-num);letter-spacing:.03em;padding:2px 8px;border-radius:99px;white-space:nowrap;background:var(--line);color:var(--muted)}
+.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}
+.chip.bad{background:var(--bad-soft);color:var(--bad)}
+.chip.info{background:var(--info-soft);color:var(--info)}
+.chip.acc{background:var(--accent-soft);color:var(--accent)}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+
+/* Avisos */
+.alerts{display:grid;gap:8px}
+.alert{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;padding:10px 12px;border-radius:10px;background:var(--info-soft);font-size:14.5px}
+.alert.alta{background:var(--bad-soft)}
+.alert.media{background:var(--warn-soft)}
+.alert .ic{font-size:18px;line-height:1.2}
+.alert b{display:block}
+.alert button{align-self:center}
+
+/* Controles */
+button,.btn{font:600 14px var(--f-body);border-radius:8px;border:1px solid var(--line);background:var(--paper);color:var(--ink);padding:8px 13px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+button:hover,.btn:hover{border-color:var(--accent)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.danger{color:var(--bad)}
+button.ghost{border-color:transparent;background:transparent;color:var(--muted);padding:6px 8px}
+button.ghost:hover{color:var(--ink)}
+button:disabled{opacity:.55;cursor:default}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input[type=text],input[type=date],input[type=email],input[type=tel],input[type=number],select,textarea{width:100%;font:16px var(--f-body);color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0}
+input.money{font-family:var(--f-num);text-align:right}
+textarea{min-height:70px;resize:vertical}
+input.bad{border-color:var(--bad);background:var(--bad-soft)}
+.field{display:grid;gap:4px;font-size:14px;color:var(--muted);min-width:0}
+.field > span.help{font-size:12.5px}
+.fields{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
+.fields .wide{grid-column:1/-1}
+fieldset{border:1px solid var(--line);border-radius:10px;padding:12px 14px 14px;margin:0;display:grid;gap:12px;min-width:0}
+legend{font:600 15px var(--f-display);color:var(--ink);padding:0 6px}
+.rowline{display:grid;gap:8px;grid-template-columns:1fr auto;align-items:end;padding:10px;border-radius:8px;background:var(--bg)}
+.rowline .fields{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.calc{font-size:14px;padding:10px 12px;border-radius:8px;background:var(--accent-soft)}
+.calc b{font-family:var(--f-num)}
+.check{display:flex;gap:8px;align-items:center;font-size:15px;color:var(--ink)}
+.check input{width:20px;height:20px;accent-color:var(--accent)}
+a{color:var(--accent)}
+
+/* Diálogo de edición */
+dialog{border:none;padding:0;border-radius:14px;width:min(760px,calc(100vw - 24px));max-height:calc(100dvh - 24px);background:var(--paper);color:var(--ink);box-shadow:0 20px 60px rgba(0,0,0,.3)}
+dialog::backdrop{background:rgba(20,15,12,.45)}
+.dlg{display:flex;flex-direction:column;max-height:calc(100dvh - 24px)}
+.dlg-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line)}
+.dlg-body{padding:16px 18px;overflow-y:auto;display:grid;gap:14px}
+.dlg-foot{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:12px 18px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line)}
+@media (max-width:600px){
+  dialog{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;border-radius:0;margin:0}
+  .dlg{height:100dvh;max-height:100dvh}
+  .dlg-head{padding-top:calc(14px + env(safe-area-inset-top,0px))}
+  .dlg-body{flex:1}
+  .cards{grid-template-columns:minmax(0,1fr)}
+}
+
+/* Listas pequeñas */
+.mini{display:grid;gap:6px;margin:0;padding:0;list-style:none;font-size:14px}
+.mini li{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 10px;border-radius:8px;background:var(--bg)}
+.mini li .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roadmap{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.roadmap li{display:flex;gap:10px;align-items:baseline;font-size:14.5px}
+.roadmap .chip{flex:0 0 auto}
+.drivechip{border-radius:999px}
+.drivechip.warn{border-color:#E0A030;background:color-mix(in srgb,#E0A030 14%,var(--paper))}
+.st.ok{color:var(--ok)} .st.err{color:var(--bad)}
+.choice{display:grid;gap:8px;padding:10px;border:1.5px solid #E0A030;border-radius:8px}
+.toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:10px;font-size:14.5px;z-index:50;max-width:calc(100vw - 32px);box-shadow:0 8px 24px rgba(0,0,0,.25)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="toprow">
+      <span class="eyebrow">Gestoría familiar · alquileres</span>
+      <button id="driveChip" type="button" class="drivechip" hidden></button>
+    </div>
+    <h1>Mi Alquiler</h1>
+    <p class="lede">Los pisos, los inquilinos y los contratos, con los datos tal y como los pide la declaración de la renta. Todo se guarda en este aparato y, si quieres, en tu Google Drive.</p>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Secciones">
+    <button type="button" role="tab" data-tab="resumen" aria-selected="true">🏠 Resumen<span class="badge" id="badgeAv" hidden></span></button>
+    <button type="button" role="tab" data-tab="inmuebles" aria-selected="false">🏢 Inmuebles</button>
+    <button type="button" role="tab" data-tab="contratos" aria-selected="false">📄 Contratos</button>
+    <button type="button" role="tab" data-tab="titulares" aria-selected="false">👫 Titulares</button>
+    <button type="button" role="tab" data-tab="datos" aria-selected="false">☁️ Datos</button>
+  </nav>
+
+  <main>
+    <section class="view" id="v-resumen" role="tabpanel"></section>
+    <section class="view" id="v-inmuebles" role="tabpanel" hidden></section>
+    <section class="view" id="v-contratos" role="tabpanel" hidden></section>
+    <section class="view" id="v-titulares" role="tabpanel" hidden></section>
+    <section class="view" id="v-datos" role="tabpanel" hidden>
+      <div class="panel" id="driveDet">
+        <div class="panel-head"><h2>☁️ Google Drive</h2></div>
+        <div id="driveBox" style="display:grid;gap:10px"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>💾 Copia de seguridad</h2></div>
+        <div style="display:grid;gap:10px">
+          <p class="note">Un archivo con todo: titulares, inmuebles, contratos y los documentos que hayas adjuntado. Sirve para pasar los datos a otro aparato sin Drive o para guardarlos a buen recaudo.</p>
+          <div class="toolbar">
+            <button type="button" class="primary" id="bkDown">⬇️ Descargar copia</button>
+            <button type="button" id="bkUp">⬆️ Cargar copia</button>
+            <input type="file" id="bkFile" accept=".json,.txt,application/json,text/plain" hidden>
+          </div>
+          <div id="bkConfirm" class="choice" hidden>
+            <p id="bkInfo" style="margin:0"></p>
+            <div class="toolbar"><button type="button" class="primary" id="bkYes">Sí, cargar esta copia</button><button type="button" id="bkNo">Cancelar</button></div>
+          </div>
+          <p class="note st" id="bkMsg" aria-live="polite"></p>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>🔒 Privacidad</h2></div>
+        <p class="note">El programa está en GitHub, pero tus datos no: viven en este navegador y, si conectas Drive, en la carpeta «MiAlquiler» de tu Drive. La app solo puede ver los archivos que ella misma crea.</p>
+        <div class="toolbar" style="margin-top:12px"><button type="button" class="danger" id="wipe">Borrar todos los datos de este aparato</button></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlgTitle">
+  <form class="dlg" id="dlgForm" method="dialog" novalidate>
+    <div class="dlg-head"><h2 id="dlgTitle"></h2><button type="button" class="ghost" data-close aria-label="Cerrar">✕</button></div>
+    <div class="dlg-body" id="dlgBody"></div>
+    <div class="dlg-foot"><div class="toolbar" id="dlgLeft"></div><div class="toolbar"><button type="button" data-close>Cancelar</button><button type="submit" class="primary" id="dlgSave">Guardar</button></div></div>
+  </form>
+</dialog>
+<input type="file" id="docFile" accept="application/pdf,image/*" multiple hidden>
+<div class="toast" id="toast" hidden role="status"></div>
+
+<script>
+"use strict";
+// =====================================================================
+// Utilidades
+// =====================================================================
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+const fmt = (n, d = 2) => (n == null || isNaN(n)) ? "" : Number(n).toLocaleString("es-ES", { minimumFractionDigits:d, maximumFractionDigits:d });
+const eur = n => fmt(n || 0) + " €";
+function parseEs(s){
+  if (s == null) return null;
+  s = String(s).replace(/[€\s]/g, "");
+  if (!s) return null;
+  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
+  const v = parseFloat(s);
+  return isNaN(v) ? null : v;
+}
+const todayIso = () => { const d = new Date(); return iso(d); };
+const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const toDate = s => { if (!s) return null; const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); };
+const fdate = s => { const d = toDate(s); return d ? d.toLocaleDateString("es-ES", { day:"2-digit", month:"2-digit", year:"numeric" }) : ""; };
+const fdateLong = s => { const d = toDate(s); return d ? d.toLocaleDateString("es-ES", { day:"numeric", month:"long", year:"numeric" }) : ""; };
+const daysTo = s => Math.round((toDate(s) - toDate(todayIso())) / 86400000);
+function addYears(s, n){
+  const d = toDate(s); if (!d) return null;
+  const t = new Date(d.getFullYear() + n, d.getMonth(), d.getDate());
+  if (t.getMonth() !== d.getMonth()) t.setDate(0); // 29 de febrero
+  return iso(t);
+}
+const plural = (n, a, b) => n === 1 ? a : b;
+function toast(msg){ const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.tm); toast.tm = setTimeout(() => t.hidden = true, 3200); }
+
+// NIF / NIE (persona física). Devuelve true, false o null si no es de ese tipo (p. ej. un CIF)
+function nifOk(v){
+  v = String(v||"").toUpperCase().replace(/[\s.-]/g, "");
+  if (!v) return null;
+  const L = "TRWAGMYFPDXBNJZSQVHLCKE";
+  let m = v.match(/^(\d{8})([A-Z])$/);
+  if (m) return L[+m[1] % 23] === m[2];
+  m = v.match(/^([XYZ])(\d{7})([A-Z])$/);
+  if (m) return L[+(("XYZ".indexOf(m[1])) + m[2]) % 23] === m[3];
+  return null;
+}
+// Referencia catastral de 20 caracteres con sus dos letras de control
+function rcOk(rc){
+  rc = String(rc||"").toUpperCase().replace(/\s/g, "");
+  if (!rc) return null;
+  if (!/^[0-9A-ZÑ]{18}[A-Z]{2}$/.test(rc)) return false;
+  const P = [13,15,12,5,4,17,9,21,3,7,1], L = "MQWERTYUIOPASDFGHJKLBZX";
+  const val = c => /\d/.test(c) ? +c : ("ABCDEFGHIJKLMNÑOPQRSTUVWXYZ".indexOf(c) + 1);
+  const dc = s => { let t = 0; for (let i = 0; i < 11; i++) t += P[i] * val(s[i]); return L[t % 23]; };
+  return dc(rc.slice(0,7) + rc.slice(14,18)) + dc(rc.slice(7,14) + rc.slice(14,18)) === rc.slice(18);
+}
+
+// =====================================================================
+// Datos
+// =====================================================================
+const KEY = "miAlquiler:data";
+const SITUACIONES = [["arrendado","Arrendado"],["disposicion","A disposición (vacío)"],["habitual","Vivienda habitual"],["otro","Otro uso"]];
+const TIPOS_INM = [["vivienda","Vivienda"],["local","Local"],["garaje","Garaje / trastero"],["otro","Otro"]];
+const ADQ = [["compra","Compra"],["herencia","Herencia"],["donacion","Donación"],["otro","Otra"]];
+const REGIMEN = [["ganancial","Gananciales"],["privativo","Privativo"],["proindiviso","Proindiviso"]];
+const REGIMEN_CT = [["antiguo","Anterior al 9/05/1985 (renta antigua)"],["lau94","LAU de 1994 (1995–feb. 2019)"],["lau19","Desde el 6/03/2019"],["ley23","Desde el 26/05/2023 (Ley de vivienda)"]];
+const INDICES = [["IPC","IPC (INE)"],["IRAV","IRAV (INE)"],["fijo","% fijo pactado"],["ninguno","Sin actualización"]];
+const RED_OPTS = [["0.6","60 %: contrato firmado antes del 26/05/2023"],["0.5","50 %: contrato nuevo (caso general)"],["0.7","70 %: zona tensionada, primer alquiler a joven de 18 a 35 años"],["0.6r","60 %: obras de rehabilitación en los 2 años anteriores"],["0.9","90 %: zona tensionada, bajada de renta de más del 5 %"],["0","0 %: no es vivienda habitual del inquilino"]];
+const FIANZA_ORG = ["Agencia de Vivienda Social (Comunidad de Madrid)","AVRA (Junta de Andalucía)","Otro organismo"];
+const label = (list, v) => (list.find(x => x[0] === v) || [, v || ""])[1];
+
+function seed(){
+  const tp = "t-" + uid(), tm = "t-" + uid();
+  const i1 = "i-" + uid(), i2 = "i-" + uid(), i3 = "i-" + uid();
+  const tit50 = () => [{ t:tp, pct:50, reg:"ganancial" }, { t:tm, pct:50, reg:"ganancial" }];
+  const inm = (id, alias, municipio, provincia, tit, notas="") => ({ id, alias, tipo:"vivienda", direccion:"", cp:"", municipio, provincia, rc:"", situacion:"arrendado",
+    tit, adq:{ forma:"compra", fecha:"", precio:null, gastos:null }, cat:{ total:null, constr:null, anio:"", revisado:true }, notas });
+  const ct = (inmueble, n, extra={}) => ({ id:"c-" + uid(), inmueble, estado:"vigente", inquilinos:Array.from({length:n}, () => ({ nombre:"", nif:"", tel:"", email:"" })),
+    firma:"", inicio:"", duracion:5, fin:"", renta:null, diaPago:"", indice:"IPC", actRef:"", ultAct:"", fijo:null, historial:[],
+    fianza:{ importe:null, org:"", fecha:"", ref:"" }, regimen:"lau19", habitual:true, red:"0.6", docs:[], notas:"", ...extra });
+  return {
+    app:"miAlquiler", v:1, seed:true, updated:0,
+    titulares:[{ id:tp, nombre:"Padre", nif:"", rel:"Padre" }, { id:tm, nombre:"Madre", nif:"", rel:"Madre" }],
+    declaracion:{ tipo:"conjunta", miembros:[tp, tm] },
+    inmuebles:[
+      inm(i1, "Pedroñeras 10", "", "", tit50()),
+      inm(i2, "Málaga · Teresa Aspiazu y Paúl", "Málaga", "Málaga", tit50()),
+      inm(i3, "Vallecas", "Madrid", "Madrid", [{ t:tp, pct:100, reg:"privativo" }], "Renta antigua: más de 60 años con el mismo inquilino. Ya no se amortiza.")
+    ],
+    contratos:[
+      ct(i1, 1),
+      ct(i2, 2, { notas:"Matrimonio: los dos firman el contrato." }),
+      ct(i3, 1, { regimen:"antiguo", duracion:0, notas:"Renta antigua. Se sube el IPC todos los años." })
+    ]
+  };
+}
+function load(){
+  try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.app === "miAlquiler") return normalize(d); } catch(e){}
+  return seed();
+}
+function normalize(d){
+  d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
+  for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
+  for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; }
+  return d;
+}
+let db = load();
+function persist(){ try { localStorage.setItem(KEY, JSON.stringify(db)); } catch(e){ toast("⚠️ No se ha podido guardar en este aparato."); } }
+function save(){ db.seed = false; db.updated = Date.now(); persist(); GD.markChanged(); render(); }
+
+const tById = id => db.titulares.find(t => t.id === id);
+const iById = id => db.inmuebles.find(m => m.id === id);
+const cById = id => db.contratos.find(c => c.id === id);
+const ctsOf = m => db.contratos.filter(c => c.inmueble === m.id);
+const vigente = m => ctsOf(m).find(c => c.estado === "vigente");
+
+// =====================================================================
+// Documentos adjuntos (en IndexedDB de este aparato y, con Drive, en la nube)
+// =====================================================================
+const IDB = (() => {
+  let dbp = null;
+  const open = () => dbp ||= new Promise((ok, ko) => { const r = indexedDB.open("miAlquiler", 1); r.onupgradeneeded = () => r.result.createObjectStore("docs"); r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error); });
+  const tx = async (mode, fn) => { const d = await open(); return new Promise((ok, ko) => { const t = d.transaction("docs", mode); const s = t.objectStore("docs"); const r = fn(s); t.oncomplete = () => ok(r && r.result); t.onerror = () => ko(t.error); }); };
+  return {
+    put: (id, blob) => tx("readwrite", s => s.put(blob, id)),
+    get: id => tx("readonly", s => s.get(id)),
+    del: id => tx("readwrite", s => s.delete(id)),
+    clear: () => tx("readwrite", s => s.clear()),
+    keys: () => tx("readonly", s => s.getAllKeys())
+  };
+})();
+async function sha(blob){ try { const b = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer()); return [...new Uint8Array(b)].slice(0,16).map(x => x.toString(16).padStart(2,"0")).join(""); } catch(e){ return ""; } }
+
+// =====================================================================
+// Cálculos de contratos y avisos
+// =====================================================================
+function finContrato(c){
+  if (c.fin) return c.fin;
+  if (c.inicio && +c.duracion > 0) return addYears(c.inicio, +c.duracion);
+  return null;
+}
+// Aniversarios de actualización: el día y mes de «actRef» (o del inicio del contrato)
+function actualizaciones(c){
+  if (c.estado !== "vigente" || c.indice === "ninguno") return null;
+  const ref = c.actRef || c.inicio; if (!ref) return null;
+  const r = toDate(ref), hoy = toDate(todayIso());
+  const at = y => { const t = new Date(y, r.getMonth(), r.getDate()); if (t.getMonth() !== r.getMonth()) t.setDate(0); return t; };
+  let next = at(hoy.getFullYear()); if (next <= hoy) next = at(hoy.getFullYear() + 1);
+  let last = at(next.getFullYear() - 1);
+  const inicio = toDate(c.inicio);
+  if (inicio && last <= inicio) last = null;               // aún no ha cumplido el primer año
+  if (inicio && next <= inicio) next = at(inicio.getFullYear() + 1);
+  const hecha = last && c.ultAct && toDate(c.ultAct) >= new Date(last.getFullYear(), last.getMonth(), last.getDate() - 45);
+  return { next:iso(next), last:last ? iso(last) : null, pendiente: !!last && !hecha };
+}
+function rentaActual(c){ return c.renta || 0; }
+
+function avisos(){
+  const out = [];
+  const add = (nivel, ic, titulo, texto, go) => out.push({ nivel, ic, titulo, texto, go });
+  for (const m of db.inmuebles){
+    const v = vigente(m);
+    if (m.situacion === "arrendado" && !v) add("media", "🏚️", `${m.alias}: sin contrato vigente`, "Está marcado como arrendado pero no tiene ningún contrato en vigor.", { tab:"contratos" });
+    if (!m.rc) add("info", "🧾", `${m.alias}: falta la referencia catastral`, "La pide la declaración. Está en el recibo del IBI.", { inm:m.id });
+    else if (rcOk(m.rc) === false) add("media", "🧾", `${m.alias}: revisa la referencia catastral`, "Las dos letras de control no cuadran con el resto. Puede haber un carácter mal copiado.", { inm:m.id });
+    const sum = m.tit.reduce((a, x) => a + (+x.pct || 0), 0);
+    if (Math.abs(sum - 100) > 0.01) add("media", "👫", `${m.alias}: la titularidad suma ${fmt(sum, 0)} %`, "Los porcentajes de los titulares tienen que sumar 100 %.", { inm:m.id });
+  }
+  for (const c of db.contratos){
+    if (c.estado !== "vigente") continue;
+    const m = iById(c.inmueble), name = m ? m.alias : "Contrato";
+    const fin = finContrato(c);
+    if (fin){
+      const d = daysTo(fin);
+      if (d < 0) add("alta", "📅", `${name}: el contrato venció el ${fdate(fin)}`, "Si sigue en prórroga, apunta la nueva fecha de fin o marca el contrato como finalizado.", { ct:c.id });
+      else if (d <= 150) add(d <= 60 ? "alta" : "media", "📅", `${name}: el contrato vence el ${fdate(fin)}`, `Quedan ${d} ${plural(d,"día","días")}. Revisa si se prorroga o se renueva y los plazos de preaviso del contrato.`, { ct:c.id });
+    }
+    const a = actualizaciones(c);
+    if (!a && c.indice !== "ninguno" && !c.inicio && !c.actRef) add("info", "📈", `${name}: ¿cuándo toca la subida?`, "Pon la fecha de inicio del contrato o la de referencia de la subida para avisarte cada año.", { ct:c.id });
+    if (a){
+      const idx = label(INDICES, c.indice);
+      if (a.pendiente) add("alta", "📈", `${name}: actualización pendiente desde el ${fdate(a.last)}`, `Toca aplicar la subida (${idx}). Calcúlala en la web del INE y regístrala en el contrato.`, { ct:c.id, ine:true });
+      else { const d = daysTo(a.next); if (d <= 45) add("media", "📈", `${name}: subida (${idx}) el ${fdate(a.next)}`, `Quedan ${d} ${plural(d,"día","días")}. Avisa al inquilino con la nueva renta.`, { ct:c.id, ine:true }); }
+    }
+    if (c.indice === "IPC" && c.firma && c.firma >= "2023-05-26")
+      add("info", "ℹ️", `${name}: contrato posterior al 26/05/2023`, "Para estos contratos la subida anual suele estar limitada por el IRAV en lugar del IPC. Compruébalo en la calculadora del INE.", { ct:c.id, ine:true });
+    if (c.regimen !== "antiguo" && c.fianza && !c.fianza.fecha) add("info", "🔐", `${name}: fianza sin depósito anotado`, "Apunta dónde y cuándo se depositó la fianza y el número de resguardo.", { ct:c.id });
+    const malos = c.inquilinos.filter(p => p.nif && nifOk(p.nif) === false).length;
+    const sinNif = c.inquilinos.filter(p => !p.nif).length;
+    if (malos) add("media", "🪪", `${name}: NIF de inquilino incorrecto`, "La letra no cuadra con el número. La declaración pide el NIF de cada arrendatario.", { ct:c.id });
+    else if (sinNif) add("info", "🪪", `${name}: ${sinNif === 1 ? "falta el NIF de un inquilino" : `faltan ${sinNif} NIF de inquilinos`}`, "La declaración pide el NIF de cada arrendatario.", { ct:c.id });
+  }
+  const rank = { alta:0, media:1, info:2 };
+  return out.sort((a, b) => rank[a.nivel] - rank[b.nivel]);
+}
+
+// =====================================================================
+// Pintado
+// =====================================================================
+const titChips = m => m.tit.map(x => `<span class="chip acc">${esc(tById(x.t)?.nombre || "?")} ${fmt(x.pct, 0)} %</span>`).join("");
+const situChip = m => { const k = { arrendado:"ok", disposicion:"warn", habitual:"info" }[m.situacion] || ""; return `<span class="chip ${k}">${esc(label(SITUACIONES, m.situacion))}</span>`; };
+function inquilinosTxt(c){
+  const n = c.inquilinos.filter(p => p.nombre).map(p => p.nombre);
+  if (n.length) return n.join(" y ");
+  return c.inquilinos.length ? `${c.inquilinos.length} ${plural(c.inquilinos.length, "inquilino", "inquilinos")} (sin nombre)` : "Sin inquilinos";
+}
+function amortInm(m){
+  const coste = (+m.adq.precio || 0) + (+m.adq.gastos || 0);
+  const tot = +m.cat.total || 0, con = +m.cat.constr || 0;
+  if (!con) return null;
+  const base = Math.max(tot > 0 ? coste * con / tot : 0, con);
+  return { base, anual: base * 0.03, pctConstr: tot > 0 ? con / tot : null, porCoste: tot > 0 && coste * con / tot > con };
+}
+
+function renderResumen(){
+  const av = avisos();
+  const alq = db.inmuebles.filter(m => m.situacion === "arrendado");
+  const mensual = db.contratos.filter(c => c.estado === "vigente").reduce((a, c) => a + rentaActual(c), 0);
+  const ine = `<a class="btn" href="https://www.ine.es/calcula/" target="_blank" rel="noopener">📊 Calculadora del INE</a>`;
+  let h = `<div class="tiles">
+    <div class="tile"><div class="k">Inmuebles</div><div class="v">${db.inmuebles.length}</div><div class="sub">${alq.length} ${plural(alq.length, "arrendado", "arrendados")}</div></div>
+    <div class="tile"><div class="k">Renta al mes</div><div class="v">${mensual ? eur(mensual) : "—"}</div><div class="sub">Contratos vigentes</div></div>
+    <div class="tile"><div class="k">Renta al año</div><div class="v">${mensual ? eur(mensual * 12) : "—"}</div><div class="sub">A la renta actual</div></div>
+    <div class="tile"><div class="k">Avisos</div><div class="v">${av.filter(a => a.nivel !== "info").length}</div><div class="sub">${av.filter(a => a.nivel === "info").length} datos por completar</div></div>
+  </div>`;
+  if (db.seed) h += `<div class="panel"><div class="panel-head"><h2>👋 Primeros pasos</h2></div><p class="note">He dejado preparados vuestros tres pisos, los dos titulares y un contrato por piso, con lo que sé. Entra en cada uno y completa los datos: la referencia catastral y el valor catastral están en el recibo del IBI; las fechas, la renta y la fianza, en el contrato.</p></div>`;
+  h += `<div class="panel"><div class="panel-head"><h2>🔔 Avisos</h2>${ine}</div>`;
+  const urgentes = av.map((a, i) => ({ ...a, i })).filter(a => a.nivel !== "info"), datos = av.map((a, i) => ({ ...a, i })).filter(a => a.nivel === "info");
+  h += urgentes.length ? `<div class="alerts">${urgentes.map(a => `<div class="alert ${a.nivel}"><span class="ic" aria-hidden="true">${a.ic}</span><div><b>${esc(a.titulo)}</b>${esc(a.texto)}</div><button type="button" data-av="${a.i}">Abrir</button></div>`).join("")}</div>` : `<p class="note">Nada urgente ✅</p>`;
+  if (datos.length){
+    const grupos = new Map();
+    for (const a of datos){ const k = a.titulo.split(": ")[0]; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(a); }
+    h += `<details style="margin-top:12px"${urgentes.length ? "" : " open"}><summary style="cursor:pointer;font-weight:600">📝 Datos por completar para la Renta (${datos.length})</summary><div style="display:grid;gap:12px;margin-top:10px">`;
+    for (const [k, list] of grupos) h += `<div><h3 style="font-size:15px;margin-bottom:6px">${esc(k)}</h3><ul class="mini">${list.map(a => `<li><span class="grow" title="${esc(a.texto)}">${a.ic} ${esc(a.titulo.slice(k.length + 2).replace(/^./, c => c.toUpperCase()))}</span><button type="button" class="ghost" data-av="${a.i}">Abrir</button></li>`).join("")}</ul></div>`;
+    h += `</div></details>`;
+  }
+  h += `</div><div class="cards">`;
+  for (const m of db.inmuebles){
+    const c = vigente(m), a = c && actualizaciones(c), fin = c && finContrato(c);
+    h += `<div class="card"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${esc([m.municipio, m.provincia && m.provincia !== m.municipio ? m.provincia : ""].filter(Boolean).join(", ") || "Sin municipio")}</div></div>${situChip(m)}</div>
+      <div class="chips">${titChips(m)}</div>
+      <dl class="kv">
+        <dt>Inquilinos</dt><dd>${c ? esc(inquilinosTxt(c)) : "—"}</dd>
+        <dt>Renta</dt><dd class="num">${c && c.renta ? eur(c.renta) + "/mes" : "—"}</dd>
+        <dt>Fin del contrato</dt><dd>${c ? (fin ? fdate(fin) : c.regimen === "antiguo" ? "Indefinido" : "—") : "—"}</dd>
+        <dt>Próxima subida</dt><dd>${a ? (a.pendiente ? `<span class="chip bad">Pendiente</span>` : fdate(a.next)) : "—"}</dd>
+      </dl>
+      <div class="toolbar"><button type="button" data-edit-inm="${m.id}">Ficha</button>${c ? `<button type="button" data-edit-ct="${c.id}">Contrato</button>` : ""}</div></div>`;
+  }
+  h += `</div>`;
+  h += `<div class="panel"><div class="panel-head"><h2>🗺️ Lo que viene</h2></div><ul class="roadmap">
+    <li><span class="chip ok">Fase 1</span><span>Titulares, inmuebles, inquilinos, contratos y avisos. <b>Ya está.</b></span></li>
+    <li><span class="chip">Fase 2</span><span>Amortizaciones: inmueble al 3 %, muebles al 10 % con prorrateo y bajas, e importar tu hoja de Google.</span></li>
+    <li><span class="chip">Fase 3</span><span>Ingresos y gastos (comunidad, IBI, seguros…) clasificados por casillas de la Renta.</span></li>
+    <li><span class="chip">Fase 4</span><span>Bandeja de documentos: facturas, extractos y recibos, con detección del piso y de duplicados.</span></li>
+    <li><span class="chip">Fase 5</span><span>Carta de subida para el inquilino y renovaciones.</span></li>
+    <li><span class="chip">Fase 6</span><span>Resumen fiscal de la declaración conjunta y exportación a Mi Renta y a Google Sheets.</span></li>
+  </ul></div>`;
+  $("v-resumen").innerHTML = h;
+  $("v-resumen").__av = av;
+  const urg = av.filter(a => a.nivel !== "info").length;
+  $("badgeAv").hidden = !urg; $("badgeAv").textContent = urg;
+}
+
+function renderInmuebles(){
+  let h = `<div class="panel-head"><h2>🏢 Inmuebles</h2><button type="button" class="primary" id="addInm">＋ Añadir inmueble</button></div>`;
+  if (!db.inmuebles.length) h += `<div class="empty">No hay inmuebles todavía.</div>`;
+  h += `<div class="cards">` + db.inmuebles.map(m => {
+    const am = amortInm(m), rc = rcOk(m.rc);
+    return `<div class="card"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${esc(m.direccion || "Sin dirección")}${m.cp || m.municipio ? " · " + esc([m.cp, m.municipio].filter(Boolean).join(" ")) : ""}</div></div>${situChip(m)}</div>
+      <div class="chips">${titChips(m)}<span class="chip">${esc(label(TIPOS_INM, m.tipo))}</span></div>
+      <dl class="kv">
+        <dt>Ref. catastral</dt><dd class="num">${m.rc ? esc(m.rc) + (rc === false ? ' <span class="chip warn">Revisar</span>' : rc ? ' <span class="chip ok">✓</span>' : "") : "—"}</dd>
+        <dt>Valor catastral</dt><dd class="num">${m.cat.total ? eur(m.cat.total) : "—"}</dd>
+        <dt>Construcción</dt><dd class="num">${m.cat.constr ? eur(m.cat.constr) : "—"}</dd>
+        <dt>Adquisición</dt><dd>${esc(label(ADQ, m.adq.forma))}${m.adq.fecha ? " · " + fdate(m.adq.fecha) : ""}</dd>
+        <dt>Amortización 3 %</dt><dd class="num">${am ? eur(am.anual) + "/año" : "—"}</dd>
+      </dl>
+      <div class="toolbar"><button type="button" data-edit-inm="${m.id}">Editar</button></div></div>`;
+  }).join("") + `</div>`;
+  $("v-inmuebles").innerHTML = h;
+}
+
+function renderContratos(){
+  const vig = db.contratos.filter(c => c.estado === "vigente"), fin = db.contratos.filter(c => c.estado !== "vigente");
+  const card = c => {
+    const m = iById(c.inmueble), a = actualizaciones(c), f = finContrato(c);
+    const docs = c.docs.length;
+    return `<div class="card"><div class="card-head"><div><h3>${esc(m ? m.alias : "Sin inmueble")}</h3><div class="sub">${esc(inquilinosTxt(c))}</div></div><span class="chip ${c.estado === "vigente" ? "ok" : ""}">${c.estado === "vigente" ? "Vigente" : "Finalizado"}</span></div>
+      <dl class="kv">
+        <dt>Renta</dt><dd class="num">${c.renta ? eur(c.renta) + "/mes" : "—"}</dd>
+        <dt>Inicio</dt><dd>${c.inicio ? fdate(c.inicio) : "—"}</dd>
+        <dt>Fin</dt><dd>${f ? fdate(f) : c.regimen === "antiguo" ? "Indefinido" : "—"}</dd>
+        <dt>Actualización</dt><dd>${esc(label(INDICES, c.indice))}${a ? " · " + (a.pendiente ? '<span class="chip bad">Pendiente</span>' : fdate(a.next)) : ""}</dd>
+        <dt>Fianza</dt><dd class="num">${c.fianza.importe ? eur(c.fianza.importe) : "—"}${c.fianza.fecha ? ' <span class="chip ok">Depositada</span>' : ""}</dd>
+        <dt>Documentos</dt><dd>${docs ? `📎 ${docs}` : "—"}</dd>
+      </dl>
+      <div class="toolbar"><button type="button" data-edit-ct="${c.id}">Editar</button></div></div>`;
+  };
+  let h = `<div class="panel-head"><h2>📄 Contratos e inquilinos</h2><button type="button" class="primary" id="addCt"${db.inmuebles.length ? "" : " disabled"}>＋ Nuevo contrato</button></div>`;
+  h += vig.length ? `<div class="cards">${vig.map(card).join("")}</div>` : `<div class="empty">No hay contratos vigentes.</div>`;
+  if (fin.length) h += `<details class="panel"><summary><h3 style="display:inline">Contratos finalizados (${fin.length})</h3></summary><div class="cards" style="margin-top:12px">${fin.map(card).join("")}</div></details>`;
+  $("v-contratos").innerHTML = h;
+}
+
+function renderTitulares(){
+  const d = db.declaracion;
+  let h = `<div class="panel"><div class="panel-head"><h2>👫 Titulares</h2><button type="button" class="primary" id="addTit">＋ Añadir titular</button></div>
+    <p class="note" style="margin-bottom:12px">Las personas que figuran como propietarias en los inmuebles. Su NIF sale en la declaración.</p>
+    <div class="cards">${db.titulares.map(t => {
+      const n = db.inmuebles.filter(m => m.tit.some(x => x.t === t.id)).length, ok = nifOk(t.nif);
+      return `<div class="card"><div class="card-head"><div><h3>${esc(t.nombre || "Sin nombre")}</h3><div class="sub">${esc(t.rel || "")}</div></div><span class="chip acc">${n} ${plural(n, "inmueble", "inmuebles")}</span></div>
+        <dl class="kv"><dt>NIF</dt><dd class="num">${t.nif ? esc(t.nif) + (ok === false ? ' <span class="chip warn">Revisar</span>' : ok ? ' <span class="chip ok">✓</span>' : "") : "—"}</dd></dl>
+        <div class="toolbar"><button type="button" data-edit-tit="${t.id}">Editar</button></div></div>`;
+    }).join("")}</div></div>`;
+  h += `<div class="panel"><div class="panel-head"><h2>🧾 Declaración</h2></div>
+    <div class="fields">
+      <label class="field">Tipo de declaración<select id="decTipo"><option value="conjunta"${d.tipo === "conjunta" ? " selected" : ""}>Conjunta</option><option value="individual"${d.tipo === "individual" ? " selected" : ""}>Individual (una por titular)</option></select></label>
+    </div>
+    <p class="note" style="margin-top:10px">${d.tipo === "conjunta"
+      ? "En la conjunta se declaran todos los inmuebles en una sola declaración, pero cada uno con el porcentaje de cada cónyuge. Mi Alquiler preparará así el resumen para Mi Renta."
+      : "Cada titular declara su parte de cada inmueble en su propia declaración. Mi Alquiler preparará un resumen por titular."}</p></div>`;
+  $("v-titulares").innerHTML = h;
+}
+
+function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderTitulares(); }
+
+// =====================================================================
+// Navegación
+// =====================================================================
+function go(tab){
+  document.querySelectorAll("nav.tabs [data-tab]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === tab)));
+  document.querySelectorAll("main > .view").forEach(v => v.hidden = v.id !== "v-" + tab);
+  if (location.hash !== "#" + tab) history.replaceState(null, "", "#" + tab);
+  window.scrollTo({ top:0 });
+}
+document.querySelector("nav.tabs").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) go(b.dataset.tab); });
+
+// =====================================================================
+// Diálogo de edición
+// =====================================================================
+let dlgSave = null;
+function openDlg(title, body, onSave, left = ""){
+  $("dlgTitle").textContent = title; $("dlgBody").innerHTML = body; $("dlgLeft").innerHTML = left;
+  $("dlgBody").oninput = $("dlgBody").onchange = $("dlgBody").onclick = null;
+  dlgSave = onSave; $("dlg").showModal(); $("dlgBody").scrollTop = 0;
+}
+$("dlg").addEventListener("click", e => { if (e.target.closest("[data-close]")) $("dlg").close(); });
+$("dlgForm").addEventListener("submit", e => {
+  e.preventDefault();
+  if (dlgSave && dlgSave() !== false){ $("dlg").close(); save(); }
+});
+const opts = (list, v) => list.map(([k, l]) => `<option value="${esc(k)}"${String(v ?? "") === k ? " selected" : ""}>${esc(l)}</option>`).join("");
+const fText = (id, lab, v, extra = "", help = "") => `<label class="field">${lab}<input type="text" id="${id}" value="${esc(v ?? "")}" ${extra}>${help ? `<span class="help">${help}</span>` : ""}</label>`;
+const fMoney = (id, lab, v, help = "") => `<label class="field">${lab}<input type="text" inputmode="decimal" class="money" id="${id}" value="${v == null || v === "" ? "" : fmt(v)}" placeholder="0,00">${help ? `<span class="help">${help}</span>` : ""}</label>`;
+const fDate = (id, lab, v, help = "") => `<label class="field">${lab}<input type="date" id="${id}" value="${esc(v || "")}">${help ? `<span class="help">${help}</span>` : ""}</label>`;
+const fSel = (id, lab, list, v, help = "") => `<label class="field">${lab}<select id="${id}">${opts(list, v)}</select>${help ? `<span class="help">${help}</span>` : ""}</label>`;
+const val = id => $(id)?.value.trim() ?? "";
+const money = id => parseEs(val(id));
+// Marca en rojo un NIF o una referencia catastral mal escrita mientras se teclea
+$("dlgBody").addEventListener("input", e => {
+  const el = e.target;
+  if (el.dataset.check === "nif") el.classList.toggle("bad", nifOk(el.value) === false);
+  if (el.dataset.check === "rc") el.classList.toggle("bad", el.value.trim().length >= 20 && rcOk(el.value) === false);
+});
+
+// ---------- Inmueble ----------
+function editInm(id){
+  const isNew = !id;
+  const m = isNew ? { id:"i-" + uid(), alias:"", tipo:"vivienda", direccion:"", cp:"", municipio:"", provincia:"", rc:"", situacion:"arrendado", tit:db.titulares.map(t => ({ t:t.id, pct:Math.round(10000 / Math.max(1, db.titulares.length)) / 100, reg:"ganancial" })), adq:{ forma:"compra" }, cat:{ revisado:true }, notas:"" } : JSON.parse(JSON.stringify(iById(id)));
+  const titRows = () => m.tit.map((x, i) => `<div class="rowline" data-ti="${i}"><div class="fields">
+      <label class="field">Titular<select data-tk="t">${db.titulares.map(t => `<option value="${t.id}"${t.id === x.t ? " selected" : ""}>${esc(t.nombre)}</option>`).join("")}</select></label>
+      <label class="field">Porcentaje<input type="text" inputmode="decimal" class="money" data-tk="pct" value="${fmt(x.pct, x.pct % 1 ? 2 : 0)}"></label>
+      <label class="field">Régimen<select data-tk="reg">${opts(REGIMEN, x.reg)}</select></label>
+    </div><button type="button" class="ghost danger" data-tdel="${i}" aria-label="Quitar titular">✕</button></div>`).join("");
+  const body = `
+    <fieldset><legend>Identificación</legend><div class="fields">
+      ${fText("m-alias", "Nombre para reconocerlo", m.alias, 'placeholder="Ej.: Pedroñeras 10" required')}
+      ${fSel("m-tipo", "Tipo", TIPOS_INM, m.tipo)}
+      ${fSel("m-sit", "Situación", SITUACIONES, m.situacion)}
+      <div class="wide">${fText("m-dir", "Dirección (calle, número, piso, puerta)", m.direccion)}</div>
+      ${fText("m-cp", "Código postal", m.cp, 'inputmode="numeric" maxlength="5"')}
+      ${fText("m-mun", "Municipio", m.municipio)}
+      ${fText("m-prov", "Provincia", m.provincia)}
+      <div class="wide">${fText("m-rc", "Referencia catastral (20 caracteres)", m.rc, 'data-check="rc" autocapitalize="characters" spellcheck="false" maxlength="24"', "Está en el recibo del IBI o en la sede del Catastro.")}</div>
+    </div></fieldset>
+    <fieldset><legend>Titularidad</legend><div id="titRows" style="display:grid;gap:8px">${titRows()}</div>
+      <div class="toolbar"><button type="button" id="titAdd"${db.titulares.length ? "" : " disabled"}>＋ Añadir titular</button><span class="note" id="titSum"></span></div></fieldset>
+    <fieldset><legend>Adquisición</legend><div class="fields">
+      ${fSel("m-adq", "Forma", ADQ, m.adq.forma)}
+      ${fDate("m-adqf", "Fecha", m.adq.fecha)}
+      ${fMoney("m-adqp", "Precio o valor declarado (€)", m.adq.precio, "En herencia o donación, el valor del impuesto de sucesiones o donaciones.")}
+      ${fMoney("m-adqg", "Gastos e impuestos (€)", m.adq.gastos, "Notaría, registro, ITP o IVA, gestoría… los de la compra.")}
+    </div></fieldset>
+    <fieldset><legend>Catastro (recibo del IBI)</legend><div class="fields">
+      ${fMoney("m-vct", "Valor catastral total (€)", m.cat.total)}
+      ${fMoney("m-vcc", "Valor catastral de la construcción (€)", m.cat.constr)}
+      ${fText("m-vca", "Año del recibo", m.cat.anio, 'inputmode="numeric" maxlength="4"')}
+      <label class="check wide"><input type="checkbox" id="m-rev"${m.cat.revisado !== false ? " checked" : ""}> Valor catastral revisado desde 1994 (imputación del 1,1 % si queda vacío)</label>
+    </div><div class="calc" id="amCalc"></div></fieldset>
+    <fieldset><legend>Notas</legend><textarea id="m-notas">${esc(m.notas || "")}</textarea></fieldset>`;
+  const readTit = () => { document.querySelectorAll("#titRows [data-ti]").forEach(r => { const x = m.tit[+r.dataset.ti]; x.t = r.querySelector('[data-tk="t"]').value; x.pct = parseEs(r.querySelector('[data-tk="pct"]').value) || 0; x.reg = r.querySelector('[data-tk="reg"]').value; }); };
+  const refresh = () => {
+    readTit();
+    const s = m.tit.reduce((a, x) => a + (+x.pct || 0), 0);
+    $("titSum").innerHTML = `Suma: <b class="num" style="color:var(${Math.abs(s - 100) < 0.01 ? "--ok" : "--bad"})">${fmt(s, 2)} %</b>`;
+    const tmp = { adq:{ precio:money("m-adqp"), gastos:money("m-adqg") }, cat:{ total:money("m-vct"), constr:money("m-vcc") } }, a = amortInm(tmp);
+    $("amCalc").innerHTML = a ? `Amortización del inmueble (3 %): <b>${eur(a.anual)}</b> al año, sobre <b>${eur(a.base)}</b> (${a.porCoste ? "parte de construcción del coste de adquisición" : "valor catastral de la construcción"}${a.pctConstr ? `; la construcción es el ${fmt(a.pctConstr * 100, 1)} % del valor catastral` : ""}). Es una estimación: la afinamos en la fase 2 con los días de alquiler y las mejoras.`
+      : "Con el valor catastral de la construcción te calculo la amortización anual del 3 %.";
+  };
+  openDlg(isNew ? "Nuevo inmueble" : m.alias, body, () => {
+    readTit();
+    if (!val("m-alias")){ $("m-alias").focus(); toast("Ponle un nombre al inmueble."); return false; }
+    Object.assign(m, { alias:val("m-alias"), tipo:val("m-tipo"), situacion:val("m-sit"), direccion:val("m-dir"), cp:val("m-cp"), municipio:val("m-mun"), provincia:val("m-prov"), rc:val("m-rc").toUpperCase().replace(/\s/g, ""), notas:val("m-notas") });
+    m.adq = { forma:val("m-adq"), fecha:val("m-adqf"), precio:money("m-adqp"), gastos:money("m-adqg") };
+    m.cat = { total:money("m-vct"), constr:money("m-vcc"), anio:val("m-vca"), revisado:$("m-rev").checked };
+    if (isNew) db.inmuebles.push(m); else db.inmuebles[db.inmuebles.findIndex(x => x.id === m.id)] = m;
+    toast("✓ Inmueble guardado");
+  }, isNew ? "" : `<button type="button" class="danger" id="delInm">Eliminar</button>`);
+  refresh();
+  $("dlgBody").oninput = e => { if (e.target.closest("#titRows") || /^m-(adq|vc)/.test(e.target.id)) refresh(); };
+  $("dlgBody").onchange = $("dlgBody").oninput;
+  $("titAdd").onclick = () => { readTit(); const used = new Set(m.tit.map(x => x.t)); const t = db.titulares.find(t => !used.has(t.id)) || db.titulares[0]; m.tit.push({ t:t.id, pct:0, reg:"ganancial" }); $("titRows").innerHTML = titRows(); refresh(); };
+  $("titRows").onclick = e => { const b = e.target.closest("[data-tdel]"); if (!b) return; readTit(); m.tit.splice(+b.dataset.tdel, 1); $("titRows").innerHTML = titRows(); refresh(); };
+  if (!isNew) armDelete($("delInm"), () => {
+    const n = ctsOf(m).length;
+    db.inmuebles = db.inmuebles.filter(x => x.id !== m.id);
+    for (const c of db.contratos.filter(c => c.inmueble === m.id)) c.docs.forEach(d => IDB.del(d.id).catch(() => {}));
+    db.contratos = db.contratos.filter(c => c.inmueble !== m.id);
+    $("dlg").close(); save(); toast(`Inmueble eliminado${n ? ` con ${n} ${plural(n, "contrato", "contratos")}` : ""}.`);
+  });
+}
+
+// ---------- Contrato ----------
+function editCt(id, inmPre){
+  const isNew = !id;
+  const c = isNew ? { id:"c-" + uid(), inmueble:inmPre || db.inmuebles[0]?.id, estado:"vigente", inquilinos:[{ nombre:"", nif:"", tel:"", email:"" }], firma:"", inicio:"", duracion:5, fin:"", renta:null, diaPago:"", indice:"IPC", actRef:"", ultAct:"", fijo:null, historial:[], fianza:{}, regimen:"ley23", habitual:true, red:"0.5", docs:[], notas:"" } : JSON.parse(JSON.stringify(cById(id)));
+  const inqRows = () => c.inquilinos.map((p, i) => `<div class="rowline" data-pi="${i}"><div class="fields">
+      <label class="field">Nombre y apellidos<input type="text" data-pk="nombre" value="${esc(p.nombre)}"></label>
+      <label class="field">NIF / NIE<input type="text" data-pk="nif" data-check="nif" class="${nifOk(p.nif) === false ? "bad" : ""}" value="${esc(p.nif)}" autocapitalize="characters" spellcheck="false"></label>
+      <label class="field">Teléfono<input type="tel" data-pk="tel" value="${esc(p.tel)}"></label>
+      <label class="field">Correo<input type="email" data-pk="email" value="${esc(p.email)}"></label>
+    </div><button type="button" class="ghost danger" data-pdel="${i}" aria-label="Quitar inquilino">✕</button></div>`).join("");
+  const histRows = () => c.historial.length ? `<ul class="mini">${[...c.historial].reverse().map(hh => `<li><span class="grow">${fdate(hh.desde)}${hh.nota ? " · " + esc(hh.nota) : ""}</span><span class="num">${hh.antes ? eur(hh.antes) + " → " : ""}${eur(hh.renta)}</span></li>`).join("")}</ul>` : `<p class="note">Aún no hay subidas registradas.</p>`;
+  const docRows = () => c.docs.length ? `<ul class="mini">${c.docs.map(d => `<li><span class="grow">📎 ${esc(d.name)}</span>${d.driveId ? '<span class="chip info">Drive</span>' : ""}<button type="button" class="ghost" data-dopen="${d.id}">Abrir</button><button type="button" class="ghost danger" data-ddel="${d.id}" aria-label="Quitar documento">✕</button></li>`).join("")}</ul>` : `<p class="note">Adjunta el contrato firmado en PDF o una foto, y los anexos.</p>`;
+  const body = `
+    <fieldset><legend>Contrato</legend><div class="fields">
+      <label class="field">Inmueble<select id="c-inm">${db.inmuebles.map(m => `<option value="${m.id}"${m.id === c.inmueble ? " selected" : ""}>${esc(m.alias)}</option>`).join("")}</select></label>
+      ${fSel("c-est", "Estado", [["vigente","Vigente"],["finalizado","Finalizado"]], c.estado)}
+      ${fSel("c-reg", "Régimen legal", REGIMEN_CT, c.regimen)}
+      ${fDate("c-firma", "Fecha de firma", c.firma)}
+      ${fDate("c-ini", "Fecha de inicio", c.inicio)}
+      <label class="field">Duración (años)<input type="text" inputmode="numeric" id="c-dur" value="${c.duracion ?? ""}" placeholder="0 = indefinido"></label>
+      ${fDate("c-fin", "Fecha de fin (si es distinta)", c.fin, "Si la dejas vacía, se calcula con el inicio y la duración.")}
+    </div><div class="calc" id="finCalc"></div></fieldset>
+    <fieldset><legend>Arrendatarios</legend><div id="inqRows" style="display:grid;gap:8px">${inqRows()}</div>
+      <div class="toolbar"><button type="button" id="inqAdd">＋ Añadir inquilino</button></div></fieldset>
+    <fieldset><legend>Renta y actualización</legend><div class="fields">
+      ${fMoney("c-renta", "Renta mensual actual (€)", c.renta)}
+      ${fText("c-dia", "Día de pago", c.diaPago, 'inputmode="numeric" placeholder="Ej.: 1-5"')}
+      ${fSel("c-idx", "Se actualiza con", INDICES, c.indice)}
+      ${fMoney("c-fijo", "% fijo pactado", c.fijo, "Solo si el contrato fija un porcentaje.")}
+      ${fDate("c-actref", "Fecha de referencia de la subida", c.actRef, "Del día y mes sale el aniversario. Vacía: la fecha de inicio.")}
+      ${fDate("c-ult", "Última actualización aplicada", c.ultAct)}
+    </div>
+    <div class="calc" id="actCalc"></div>
+    <details><summary style="cursor:pointer;font-weight:600">📈 Registrar una subida</summary>
+      <div style="display:grid;gap:10px;margin-top:10px">
+        <p class="note">Calcula la nueva renta en la <a href="https://www.ine.es/calcula/" target="_blank" rel="noopener">calculadora del INE</a> y apúntala aquí, o pon el porcentaje y te la calculo.</p>
+        <div class="fields">
+          ${fMoney("s-pct", "Porcentaje de subida (%)", null)}
+          ${fMoney("s-renta", "Nueva renta mensual (€)", null)}
+          ${fDate("s-desde", "Desde", "")}
+          ${fText("s-nota", "Nota", "", 'placeholder="Ej.: IPC 12 meses: 2,9 %"')}
+        </div>
+        <div class="toolbar"><button type="button" id="s-add">Registrar subida</button></div>
+      </div>
+    </details>
+    <div><h3 style="margin-bottom:8px">Historial de la renta</h3><div id="histBox">${histRows()}</div></div>
+    </fieldset>
+    <fieldset><legend>Fianza</legend><div class="fields">
+      ${fMoney("f-imp", "Importe (€)", c.fianza.importe, "En vivienda, una mensualidad.")}
+      <label class="field">Depositada en<input type="text" id="f-org" list="orgList" value="${esc(c.fianza.org || "")}"></label>
+      ${fDate("f-fecha", "Fecha del depósito", c.fianza.fecha)}
+      ${fText("f-ref", "Nº de resguardo", c.fianza.ref)}
+    </div><datalist id="orgList">${FIANZA_ORG.map(o => `<option value="${esc(o)}">`).join("")}</datalist></fieldset>
+    <fieldset><legend>Para la declaración</legend><div class="fields">
+      <label class="check wide"><input type="checkbox" id="c-hab"${c.habitual ? " checked" : ""}> Es la vivienda habitual del inquilino (da derecho a la reducción)</label>
+      <div class="wide">${fSel("c-red", "Reducción del rendimiento neto", RED_OPTS, c.red)}</div>
+    </div><p class="note" id="redNote"></p></fieldset>
+    <fieldset><legend>Documentos</legend><div id="docBox">${docRows()}</div><div class="toolbar"><button type="button" id="docAdd">📎 Adjuntar</button></div></fieldset>
+    <fieldset><legend>Notas</legend><textarea id="c-notas">${esc(c.notas || "")}</textarea></fieldset>`;
+  const readInq = () => document.querySelectorAll("#inqRows [data-pi]").forEach(r => { const p = c.inquilinos[+r.dataset.pi]; r.querySelectorAll("[data-pk]").forEach(el => p[el.dataset.pk] = el.value.trim()); });
+  const readForm = () => {
+    readInq();
+    Object.assign(c, { inmueble:val("c-inm"), estado:val("c-est"), regimen:val("c-reg"), firma:val("c-firma"), inicio:val("c-ini"), duracion:val("c-dur") === "" ? null : Math.max(0, parseInt(val("c-dur")) || 0), fin:val("c-fin"),
+      renta:money("c-renta"), diaPago:val("c-dia"), indice:val("c-idx"), fijo:money("c-fijo"), actRef:val("c-actref"), ultAct:val("c-ult"), habitual:$("c-hab").checked, red:val("c-red"), notas:val("c-notas") });
+    c.fianza = { importe:money("f-imp"), org:val("f-org"), fecha:val("f-fecha"), ref:val("f-ref") };
+    c.inquilinos.forEach(p => p.nif = p.nif.toUpperCase().replace(/[\s.-]/g, ""));
+  };
+  const refresh = () => {
+    readForm();
+    const f = finContrato(c);
+    $("finCalc").innerHTML = f ? `Fin del contrato: <b>${fdateLong(f)}</b>${c.estado === "vigente" ? ` (${daysTo(f) >= 0 ? `faltan ${daysTo(f)} días` : `venció hace ${-daysTo(f)} días`})` : ""}.` : c.regimen === "antiguo" ? "Contrato de renta antigua: sin fecha de fin." : "Pon la fecha de inicio y la duración para saber cuándo vence.";
+    const a = actualizaciones(c);
+    $("actCalc").innerHTML = c.indice === "ninguno" ? "Este contrato no se actualiza." : a ? (a.pendiente ? `⚠️ La subida del ${fdate(a.last)} está <b>pendiente</b>.` : `Próxima subida: <b>${fdateLong(a.next)}</b>.`) + (c.renta && c.indice === "fijo" && c.fijo ? ` Con el ${fmt(c.fijo)} % pactado, la renta pasaría a <b>${eur(c.renta * (1 + c.fijo / 100))}</b>.` : "") : "Pon la fecha de inicio (o la de referencia) para calcular los aniversarios.";
+    $("redNote").textContent = !c.habitual ? "Si no es vivienda habitual del inquilino, no hay reducción." : c.regimen === "ley23" ? "Contratos desde el 26/05/2023: el caso general es el 50 %; los porcentajes mayores dependen de la zona tensionada." : "Contratos anteriores al 26/05/2023: reducción del 60 %.";
+    if (!$("s-desde").dataset.touched){ const a2 = actualizaciones(c); $("s-desde").value = a2 ? (a2.pendiente ? a2.last : a2.next) : todayIso(); }
+  };
+  openDlg(isNew ? "Nuevo contrato" : (iById(c.inmueble)?.alias || "Contrato"), body, () => {
+    readForm();
+    if (isNew) db.contratos.push(c); else db.contratos[db.contratos.findIndex(x => x.id === c.id)] = c;
+    if (pendingDocs.length){ pendingDocs.forEach(d => GD.addDoc(d, c)); pendingDocs = []; }
+    toast("✓ Contrato guardado");
+  }, isNew ? "" : `<button type="button" class="danger" id="delCt">Eliminar</button>`);
+  let pendingDocs = [];
+  refresh();
+  $("dlgBody").oninput = e => {
+    if (e.target.id === "s-pct"){ const p = parseEs(e.target.value), r = money("c-renta"); if (p != null && r) $("s-renta").value = fmt(Math.round(r * (1 + p / 100) * 100) / 100); return; }
+    if (e.target.id === "s-renta"){ const n = parseEs(e.target.value), r = money("c-renta"); if (n && r) $("s-pct").value = fmt((n / r - 1) * 100); return; }
+    if (e.target.id === "s-desde"){ e.target.dataset.touched = "1"; return; }
+    if (/^s-/.test(e.target.id)) return;
+    refresh();
+  };
+  $("dlgBody").onchange = $("dlgBody").oninput;
+  $("inqAdd").onclick = () => { readInq(); c.inquilinos.push({ nombre:"", nif:"", tel:"", email:"" }); $("inqRows").innerHTML = inqRows(); };
+  $("inqRows").onclick = e => { const b = e.target.closest("[data-pdel]"); if (!b) return; readInq(); c.inquilinos.splice(+b.dataset.pdel, 1); $("inqRows").innerHTML = inqRows(); };
+  $("s-add").onclick = () => {
+    const n = money("s-renta"), desde = val("s-desde");
+    if (!n || !desde){ toast("Pon la nueva renta y la fecha."); return; }
+    readForm();
+    c.historial.push({ desde, renta:n, antes:c.renta || null, pct:money("s-pct"), nota:val("s-nota") });
+    c.historial.sort((a, b) => a.desde.localeCompare(b.desde));
+    c.renta = n; c.ultAct = desde;
+    $("c-renta").value = fmt(n); $("c-ult").value = desde; ["s-pct","s-renta","s-nota"].forEach(k => $(k).value = ""); delete $("s-desde").dataset.touched;
+    $("histBox").innerHTML = histRows(); refresh();
+    toast("Subida apuntada. Pulsa «Guardar» para confirmarla.");
+  };
+  $("docAdd").onclick = () => { $("docFile").onchange = async () => {
+    for (const f of $("docFile").files){
+      const h = await sha(f);
+      if (h && c.docs.some(d => d.hash === h)){ toast(`«${f.name}» ya estaba adjunto.`); continue; }
+      const d = { id:"d-" + uid(), name:f.name, type:f.type, size:f.size, hash:h, added:todayIso() };
+      await IDB.put(d.id, f); c.docs.push(d); pendingDocs.push(d);
+    }
+    $("docFile").value = ""; $("docBox").innerHTML = docRows();
+  }; $("docFile").click(); };
+  $("docBox").onclick = async e => {
+    const o = e.target.closest("[data-dopen]"), x = e.target.closest("[data-ddel]");
+    if (o) openDoc(c.docs.find(d => d.id === o.dataset.dopen));
+    if (x){ const id = x.dataset.ddel; c.docs = c.docs.filter(d => d.id !== id); pendingDocs = pendingDocs.filter(d => d.id !== id); IDB.del(id).catch(() => {}); $("docBox").innerHTML = docRows(); }
+  };
+  if (!isNew) armDelete($("delCt"), () => { c.docs.forEach(d => IDB.del(d.id).catch(() => {})); db.contratos = db.contratos.filter(x => x.id !== c.id); $("dlg").close(); save(); toast("Contrato eliminado."); });
+}
+async function openDoc(d){
+  if (!d) return;
+  const w = window.open("", "_blank");
+  let blob = await IDB.get(d.id).catch(() => null);
+  if (!blob && d.driveId){ try { blob = await GD.download(d.driveId); if (blob) await IDB.put(d.id, blob); } catch(e){} }
+  if (!blob){ w && w.close(); toast(d.driveId ? "Está en Drive: toca «☁️» para conectar y vuelve a abrirlo." : "Este documento no está en este aparato."); return; }
+  const url = URL.createObjectURL(blob);
+  if (w) w.location = url; else location.href = url;
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+// ---------- Titular ----------
+function editTit(id){
+  const isNew = !id, t = isNew ? { id:"t-" + uid(), nombre:"", nif:"", rel:"" } : { ...tById(id) };
+  openDlg(isNew ? "Nuevo titular" : t.nombre, `<div class="fields">
+      ${fText("t-nom", "Nombre y apellidos", t.nombre, "required")}
+      ${fText("t-nif", "NIF", t.nif, 'data-check="nif" autocapitalize="characters" spellcheck="false"')}
+      ${fText("t-rel", "Relación", t.rel, 'placeholder="Padre, madre…"')}
+    </div>`, () => {
+    if (!val("t-nom")){ toast("Pon el nombre."); return false; }
+    Object.assign(t, { nombre:val("t-nom"), nif:val("t-nif").toUpperCase().replace(/[\s.-]/g, ""), rel:val("t-rel") });
+    if (isNew){ db.titulares.push(t); db.declaracion.miembros.push(t.id); } else db.titulares[db.titulares.findIndex(x => x.id === t.id)] = t;
+    toast("✓ Titular guardado");
+  }, isNew ? "" : `<button type="button" class="danger" id="delTit">Eliminar</button>`);
+  if (!isNew) armDelete($("delTit"), () => {
+    if (db.inmuebles.some(m => m.tit.some(x => x.t === t.id))){ toast("Antes quítalo de la titularidad de sus inmuebles."); return; }
+    db.titulares = db.titulares.filter(x => x.id !== t.id); db.declaracion.miembros = db.declaracion.miembros.filter(x => x !== t.id);
+    $("dlg").close(); save();
+  });
+}
+function armDelete(b, fn){
+  b.onclick = () => {
+    if (!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "¿Seguro? Toca otra vez"; setTimeout(() => { if (b.isConnected){ delete b.dataset.armed; b.textContent = "Eliminar"; } }, 3500); return; }
+    fn();
+  };
+}
+
+// Clics en las vistas
+document.querySelector("main").addEventListener("click", e => {
+  const t = e.target;
+  const ei = t.closest("[data-edit-inm]"); if (ei) return editInm(ei.dataset.editInm);
+  const ec = t.closest("[data-edit-ct]"); if (ec) return editCt(ec.dataset.editCt);
+  const et = t.closest("[data-edit-tit]"); if (et) return editTit(et.dataset.editTit);
+  if (t.closest("#addInm")) return editInm();
+  if (t.closest("#addCt")) return editCt();
+  if (t.closest("#addTit")) return editTit();
+  const av = t.closest("[data-av]");
+  if (av){ const a = $("v-resumen").__av[+av.dataset.av]?.go; if (!a) return; if (a.inm) editInm(a.inm); else if (a.ct) editCt(a.ct); else if (a.tab) go(a.tab); }
+});
+document.querySelector("main").addEventListener("change", e => {
+  if (e.target.id === "decTipo"){ db.declaracion.tipo = e.target.value; save(); }
+});
+
+// =====================================================================
+// Copia de seguridad
+// =====================================================================
+const blobToB64 = b => new Promise(ok => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.readAsDataURL(b); });
+const b64ToBlob = (s, type) => { const bin = atob(s), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type:type || "application/octet-stream" }); };
+const inFrame = (() => { try { return window.self !== window.top; } catch(e){ return true; } })();
+$("bkDown").onclick = async () => {
+  if (inFrame){ $("bkMsg").textContent = "Aquí dentro no se pueden descargar archivos: abre la app en su web."; return; }
+  const docs = [];
+  for (const c of db.contratos) for (const d of c.docs){ const b = await IDB.get(d.id).catch(() => null); if (b) docs.push({ id:d.id, type:d.type, b64:await blobToB64(b) }); }
+  const blob = new Blob([JSON.stringify({ app:"miAlquiler", v:1, at:new Date().toISOString(), data:db, docs })], { type:"application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `mi-alquiler-copia-${todayIso()}.json`;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  $("bkMsg").textContent = "✓ Copia descargada. Guárdala en un sitio seguro: lleva datos personales de los inquilinos.";
+};
+let pendingBk = null;
+$("bkUp").onclick = () => $("bkFile").click();
+$("bkFile").onchange = async () => {
+  const f = $("bkFile").files[0]; $("bkFile").value = ""; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    if (d.app !== "miAlquiler" || !d.data) throw 0;
+    pendingBk = d;
+    $("bkInfo").innerHTML = `Copia del <b>${esc(new Date(d.at).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" }))}</b>: ${d.data.inmuebles.length} inmuebles, ${d.data.contratos.length} contratos y ${(d.docs || []).length} documentos. <b>Sustituye lo que hay ahora en este aparato.</b>`;
+    $("bkConfirm").hidden = false; $("bkMsg").textContent = "";
+  } catch(e){ $("bkMsg").textContent = "Ese archivo no es una copia de Mi Alquiler."; }
+};
+$("bkYes").onclick = async () => {
+  if (!pendingBk) return;
+  await IDB.clear().catch(() => {});
+  for (const d of pendingBk.docs || []) await IDB.put(d.id, b64ToBlob(d.b64, d.type)).catch(() => {});
+  db = normalize(pendingBk.data); pendingBk = null; $("bkConfirm").hidden = true;
+  save(); $("bkMsg").textContent = "✓ Copia cargada.";
+};
+$("bkNo").onclick = () => { pendingBk = null; $("bkConfirm").hidden = true; $("bkMsg").textContent = "Cancelado."; };
+armDelete($("wipe"), async () => {
+  await IDB.clear().catch(() => {}); try { localStorage.removeItem(KEY); } catch(e){}
+  db = seed(); persist(); render(); toast("Datos borrados de este aparato. Lo que haya en Drive sigue allí.");
+  $("wipe").textContent = "Borrar todos los datos de este aparato"; delete $("wipe").dataset.armed;
+});
+
+// =====================================================================
+// Google Drive: tus datos en MiAlquiler/mi-alquiler-datos.json y los documentos en MiAlquiler/<inmueble>/Contratos
+// El permiso drive.file solo deja ver los archivos que crea esta app, nada más de tu Drive.
+// =====================================================================
+const GD = (() => {
+  const CLIENT_ID = "775415077551-v99g3415vpmd6vra392smfmv0q8meav3.apps.googleusercontent.com"; // el mismo de Mi Renta y Mi Voz (misma web: quinigrama.github.io)
+  const SCOPE = "https://www.googleapis.com/auth/drive.file";
+  const API = "https://www.googleapis.com/drive/v3", UPL = "https://www.googleapis.com/upload/drive/v3";
+  const ROOT = "MiAlquiler", DATA = "mi-alquiler-datos.json";
+  const K = { on:"miAlquilerDrive:on", who:"miAlquilerDrive:who", st:"miAlquilerDrive:state", chg:"miAlquilerDrive:chg", q:"miAlquilerDrive:queue" };
+  const LS = { get:(k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch(e){ return d; } },
+               set:(k, v) => { try { localStorage.setItem(k, v); } catch(e){} }, del:k => { try { localStorage.removeItem(k); } catch(e){} } };
+  const hosted = location.protocol === "https:" && /github\.io$/.test(location.hostname);
+  let token = null, exp = 0, tc = null, pend = null, busy = false, timer = null, applying = false, choice = null;
+  let last = { msg:"", kind:"" };
+  const folders = new Map();
+  let queue = (() => { try { return JSON.parse(LS.get(K.q, "[]")) || []; } catch(e){ return []; } })(); // [{doc, ct}]
+  const saveQueue = () => LS.set(K.q, JSON.stringify(queue));
+  const fail = (code, msg) => Object.assign(new Error(msg || code), { code });
+  const hasToken = () => !!token && Date.now() < exp - 60000;
+  const getSt = () => { try { return JSON.parse(LS.get(K.st, "{}")) || {}; } catch(e){ return {}; } };
+  const setSt = o => LS.set(K.st, JSON.stringify(o));
+  const changed = () => +LS.get(K.chg, 0) > (getSt().at || 0);
+  const on = () => !!LS.get(K.on);
+  const stamp = () => { const d = new Date(), z = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}`; };
+  const safe = t => String(t || "").replace(/[\/\\:*?"<>|]+/g, "-").trim() || "Inmueble";
+
+  const loadGis = () => new Promise((ok, ko) => {
+    if (window.google?.accounts?.oauth2) return ok();
+    const sc = document.createElement("script"); sc.src = "https://accounts.google.com/gsi/client"; sc.async = true;
+    sc.onload = () => ok(); sc.onerror = () => ko(fail("net")); document.head.append(sc);
+  });
+  function initClient(){
+    if (tc || !window.google?.accounts?.oauth2) return;
+    tc = google.accounts.oauth2.initTokenClient({ client_id:CLIENT_ID, scope:SCOPE,
+      callback: r => { const p = pend; pend = null; if (!p) return;
+        if (r.error || !r.access_token) return p.ko(fail("denied"));
+        if (google.accounts.oauth2.hasGrantedAllScopes && !google.accounts.oauth2.hasGrantedAllScopes(r, SCOPE)) return p.ko(fail("scope"));
+        token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000; LS.set(K.on, "1"); p.ok(token); },
+      error_callback: e => { const p = pend; pend = null; p && p.ko(fail(e && e.type === "popup_closed" ? "closed" : "denied")); } });
+  }
+  function askToken(){
+    if (hasToken()) return Promise.resolve(token);
+    if (!tc) return Promise.reject(fail("gis"));
+    return new Promise((ok, ko) => {
+      if (pend) pend.ko(fail("closed")); pend = { ok, ko };
+      const o = { prompt: on() ? "" : "consent" }; const who = LS.get(K.who, ""); if (who) o.hint = who;
+      tc.requestAccessToken(o);
+    });
+  }
+  async function api(url, opt = {}){
+    if (!hasToken()) throw fail("auth");
+    let r; try { r = await fetch(url, { ...opt, headers:{ ...(opt.headers || {}), Authorization:"Bearer " + token } }); } catch(e){ throw fail("net"); }
+    if (r.status === 401){ token = null; throw fail("auth"); }
+    if (r.status === 403 && /storageQuotaExceeded/.test(await r.clone().text().catch(() => ""))) throw fail("full");
+    if (!r.ok) throw fail("http", "Drive respondió " + r.status);
+    return r;
+  }
+  const q = t => "'" + String(t).replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
+  const list = async (query, fields) => (await (await api(API + "/files?spaces=drive&orderBy=modifiedTime%20desc&pageSize=10&fields=" + encodeURIComponent("files(" + fields + ")") + "&q=" + encodeURIComponent(query))).json()).files || [];
+  async function folderId(path){
+    let parent = null, key = "";
+    for (const name of path){
+      key += "/" + name; if (folders.has(key)){ parent = folders.get(key); continue; }
+      const f = await list("name=" + q(name) + " and mimeType='application/vnd.google-apps.folder' and trashed=false" + (parent ? " and " + q(parent) + " in parents" : ""), "id");
+      let id = f[0]?.id;
+      if (!id){ const r = await api(API + "/files?fields=id", { method:"POST", headers:{ "Content-Type":"application/json; charset=UTF-8" },
+        body:JSON.stringify({ name, mimeType:"application/vnd.google-apps.folder", ...(parent ? { parents:[parent] } : {}) }) }); id = (await r.json()).id; }
+      folders.set(key, id); parent = id;
+    }
+    return parent;
+  }
+  async function upload(id, meta, blob, mime){
+    const b = "mialquiler" + Math.random().toString(36).slice(2);
+    const body = new Blob(["--" + b + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n" + JSON.stringify(meta) + "\r\n", "--" + b + "\r\nContent-Type: " + mime + "\r\n\r\n", blob, "\r\n--" + b + "--"]);
+    const r = await api(UPL + "/files" + (id ? "/" + id : "") + "?uploadType=multipart&fields=id,modifiedTime,size", { method:id ? "PATCH" : "POST", headers:{ "Content-Type":"multipart/related; boundary=" + b }, body });
+    return r.json();
+  }
+  async function whoAmI(){ try { const u = (await (await api(API + "/about?fields=user(emailAddress)")).json()).user; if (u?.emailAddress) LS.set(K.who, u.emailAddress); } catch(e){} }
+
+  const hasLocalData = () => !db.seed;
+  const dataBlob = () => new Blob([JSON.stringify({ app:"miAlquiler", v:1, at:new Date().toISOString(), data:db })], { type:"application/json" });
+  async function readRemote(rem){
+    let d; try { d = await (await api(API + "/files/" + rem.id + "?alt=media")).json(); } catch(e){ if (e.code) throw e; d = null; }
+    if (!d || d.app !== "miAlquiler" || !d.data) throw fail("bad");
+    return d;
+  }
+  async function takeRemote(rem){
+    const d = await readRemote(rem);
+    applying = true;
+    try { db = normalize(d.data); persist(); render(); } finally { applying = false; }
+    const now = Date.now(); LS.set(K.chg, now); setSt({ id:rem.id, mod:rem.modifiedTime, at:now });
+    return "Traído de Drive.";
+  }
+  async function putLocal(rem, root){
+    const r = await upload(rem?.id, rem ? {} : { name:DATA, parents:[root] }, dataBlob(), "application/json");
+    setSt({ id:r.id, mod:r.modifiedTime, at:Date.now() });
+    return "Datos guardados en Drive.";
+  }
+  async function syncData(){
+    const root = await folderId([ROOT]);
+    const rem = (await list("name=" + q(DATA) + " and " + q(root) + " in parents and trashed=false", "id,modifiedTime,size"))[0];
+    const st = getSt(), mine = changed(), theirs = !!rem && rem.modifiedTime !== st.mod;
+    if (theirs && !mine) return takeRemote(rem);
+    if (theirs && mine){
+      if (!st.mod && !hasLocalData()) return takeRemote(rem); // aparato nuevo sin datos: manda Drive
+      choice = { rem, root }; return null;
+    }
+    if (mine || !rem) return putLocal(rem, root);
+    return "Datos al día con Drive.";
+  }
+  async function resolve(keep){
+    const { rem, root } = choice; choice = null;
+    if (keep === "drive"){
+      await upload(null, { name:"mi-alquiler-datos-este-aparato-" + stamp() + ".json", parents:[root] }, dataBlob(), "application/json");
+      return (await takeRemote(rem)) + " Lo que tenías en este aparato queda guardado en Drive como copia.";
+    }
+    await api(API + "/files/" + rem.id + "/copy?fields=id", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ name:"mi-alquiler-datos-drive-" + stamp() + ".json", parents:[root] }) });
+    return (await putLocal(rem, root)) + " La versión que había en Drive queda guardada como copia.";
+  }
+  // Documentos: se suben una vez (se reconocen por su huella) y se apunta su id de Drive en el contrato
+  async function putDoc(item){
+    const c = cById(item.ct), d = c && c.docs.find(x => x.id === item.doc);
+    if (!d || d.driveId) return false;
+    const blob = await IDB.get(d.id).catch(() => null); if (!blob) return false;
+    const m = iById(c.inmueble);
+    const fid = await folderId([ROOT, safe(m?.alias), "Contratos"]);
+    let id = d.hash ? (await list(q(fid) + " in parents and trashed=false and appProperties has { key='h' and value=" + q(d.hash) + " }", "id"))[0]?.id : null;
+    if (!id) id = (await upload(null, { name:d.name, parents:[fid], ...(d.hash ? { appProperties:{ h:d.hash } } : {}) }, blob, d.type || "application/octet-stream")).id;
+    d.driveId = id; db.updated = Date.now(); persist(); LS.set(K.chg, Date.now());
+    return true;
+  }
+  async function flushDocs(){
+    let n = 0;
+    for (const c of db.contratos) for (const d of c.docs) if (!d.driveId && !queue.some(x => x.doc === d.id)) queue.push({ doc:d.id, ct:c.id });
+    while (queue.length){ render(`Subiendo documentos a Drive… (${queue.length})`); if (await putDoc(queue[0])) n++; queue.shift(); saveQueue(); }
+    return n;
+  }
+  async function sync({ interactive, keep } = {}){
+    if (!hosted || busy) return;
+    if (interactive){
+      try { await loadGis(); initClient(); await askToken(); }
+      catch(e){ say(e.code === "closed" ? "Has cerrado la ventana de Google sin conectar." : e.code === "net" || e.code === "gis" ? "No se ha podido cargar el acceso de Google. Revisa la conexión." : "Google no ha dado permiso para usar Drive.", "err"); return; }
+    } else if (!hasToken()) return render();
+    busy = true; clearTimeout(timer); render("Sincronizando con Drive…");
+    try {
+      if (!LS.get(K.who)) await whoAmI();
+      let m1 = keep ? await resolve(keep) : await syncData();
+      let n = 0;
+      if (!choice){ n = await flushDocs(); if (n) m1 = await syncData() || m1; } // los ids de Drive de los documentos también se guardan
+      busy = false;
+      if (choice) say("", "");
+      else { say([m1, n ? `${n} ${plural(n, "documento guardado", "documentos guardados")} en ${ROOT}.` : ""].filter(Boolean).join(" "), "ok"); render(); }
+    } catch(e){
+      busy = false;
+      say(e.code === "auth" ? "La conexión con Google ha caducado. Toca «Sincronizar» para seguir."
+        : e.code === "net" ? "Sin conexión con Google. Toca «Sincronizar» cuando vuelvas a tener conexión."
+        : e.code === "full" ? "Tu Google Drive está lleno: no cabe la copia."
+        : e.code === "bad" ? "El archivo de datos de Drive no es una copia válida de Mi Alquiler. No he tocado nada."
+        : "No se pudo sincronizar (" + (e.message || "error") + ").", "err");
+    }
+  }
+  function markChanged(){
+    if (applying) return;
+    LS.set(K.chg, Date.now());
+    if (!on()) return;
+    render();
+    if (hasToken()){ clearTimeout(timer); timer = setTimeout(() => sync(), 8000); }
+  }
+  function addDoc(d, c){
+    if (!hosted || !on()) return false;
+    queue.push({ doc:d.id, ct:c.id }); saveQueue(); render();
+    return true;
+  }
+  async function download(id){
+    if (!hasToken()) return null;
+    return (await api(API + "/files/" + id + "?alt=media")).blob();
+  }
+  addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && timer && hasToken()){ clearTimeout(timer); sync(); } });
+  function disconnect(){
+    try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch(e){}
+    token = null; folders.clear(); choice = null; LS.del(K.on); LS.del(K.who); LS.del(K.st); clearTimeout(timer);
+    say("Desconectado de Google Drive. Tus archivos siguen en la carpeta " + ROOT + " de tu Drive.", "");
+  }
+  function say(msg, kind){ last = { msg, kind }; render(); }
+  function render(working){
+    const chip = $("driveChip"), box = $("driveBox"); if (!chip || !box) return;
+    const isOn = on(), who = LS.get(K.who, ""), pendingUp = isOn && (changed() || queue.length);
+    chip.hidden = !hosted;
+    chip.className = "drivechip" + (busy || !isOn ? "" : !hasToken() || pendingUp || choice ? " warn" : "");
+    chip.textContent = busy ? "☁️ Sincronizando…" : !isOn ? "☁️ Conectar Drive" : choice ? "☁️ Elige qué datos quedan" : !hasToken() ? "☁️ Toca para sincronizar" : pendingUp ? "☁️ Cambios por subir" : "☁️ Drive al día";
+    chip.disabled = busy;
+    let h = "";
+    if (!hosted){
+      h = `<p class="note">Drive solo funciona desde la app en quinigrama.github.io/MiAlquiler. Aquí usa la copia de seguridad.</p>`;
+    } else if (!isOn){
+      h = `<p class="note">Guarda en la carpeta «${ROOT}» de tu Google Drive tus datos y los contratos que adjuntes, ordenados así: <strong>${ROOT}/&lt;inmueble&gt;/Contratos</strong>. Tendrás lo mismo en el móvil y en el ordenador. La app solo puede ver los archivos que ella misma crea, nada más de tu Drive.</p>
+        <div class="toolbar"><button type="button" class="primary" data-gd="sync">Conectar con Google Drive</button></div>`;
+    } else {
+      const st = getSt();
+      h = `<p class="note">${who ? `Conectado como <strong>${esc(who)}</strong>. ` : "Conectado. "}Datos: ${ROOT}/${DATA}.${st.at ? ` Última sincronización: ${new Date(st.at).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" })}.` : ""}</p>
+        ${queue.length ? `<p class="note">${queue.length} ${plural(queue.length, "documento esperando", "documentos esperando")} para subir.</p>` : ""}
+        <p class="note">Al abrir la app, toca «Sincronizar» para traer lo último. Mientras la tengas abierta, los cambios se suben solos.</p>
+        ${choice ? `<div class="choice"><p style="margin:0"><strong>Hay cambios en este aparato y en Drive.</strong> ¿Con cuáles te quedas? La otra versión se guarda como copia en Drive, no se pierde nada.</p>
+          <div class="toolbar"><button type="button" class="primary" data-gd="keep-here">Los de este aparato</button><button type="button" data-gd="keep-drive">Los de Drive (${new Date(choice.rem.modifiedTime).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" })})</button></div></div>` : ""}
+        <div class="toolbar"><button type="button" class="primary" data-gd="sync"${busy ? " disabled" : ""}>⇅ Sincronizar ahora</button><button type="button" class="ghost" data-gd="off"${busy ? " disabled" : ""}>Desconectar</button></div>`;
+    }
+    const msg = working || last.msg;
+    box.innerHTML = h + `<p class="note st${working ? "" : last.kind ? " " + last.kind : ""}" aria-live="polite">${esc(msg || "")}</p>`;
+  }
+  function mount(){
+    $("driveChip").onclick = () => { if (on() && !choice) sync({ interactive:true }); else { go("datos"); render(); } };
+    $("driveBox").addEventListener("click", e => {
+      const a = e.target.closest("[data-gd]"); if (!a) return;
+      const k = a.dataset.gd;
+      if (k === "sync") sync({ interactive:true });
+      else if (k === "off") disconnect();
+      else if (k === "keep-here") sync({ interactive:true, keep:"here" });
+      else if (k === "keep-drive") sync({ interactive:true, keep:"drive" });
+    });
+    render();
+    if (hosted) loadGis().then(initClient).catch(() => {});
+  }
+  return { mount, markChanged, addDoc, download, render };
+})();
+
+// =====================================================================
+// Arranque
+// =====================================================================
+GD.mount();
+render();
+const startTab = location.hash.slice(1);
+if (["resumen","inmuebles","contratos","titulares","datos"].includes(startTab)) go(startTab);
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
