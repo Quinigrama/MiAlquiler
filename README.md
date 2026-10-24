@@ -13,7 +13,7 @@ Abre la app: https://quinigrama.github.io/MiAlquiler/
 ## Fases
 
 1. Titulares, inmuebles, inquilinos, contratos y avisos. ✅
-2. Amortizaciones (inmueble 3 %, muebles 10 %) e importación desde Google Sheets.
+2. Amortizaciones (inmueble 3 %, muebles 10 %) e importación desde Google Sheets. ✅
 3. Ingresos y gastos clasificados por casillas de la Renta. ✅
 4. Bandeja de documentos con detección del piso y de duplicados. ✅
 5. Carta de subida para el inquilino y renovaciones.

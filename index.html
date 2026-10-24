@@ -176,6 +176,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <button type="button" role="tab" data-tab="inmuebles" aria-selected="false">🏢 Inmuebles</button>
     <button type="button" role="tab" data-tab="contratos" aria-selected="false">📄 Contratos</button>
     <button type="button" role="tab" data-tab="cuentas" aria-selected="false">💶 Cuentas</button>
+    <button type="button" role="tab" data-tab="amort" aria-selected="false">📉 Amortizaciones</button>
     <button type="button" role="tab" data-tab="bandeja" aria-selected="false">📥 Bandeja</button>
     <button type="button" role="tab" data-tab="titulares" aria-selected="false">👫 Titulares</button>
     <button type="button" role="tab" data-tab="datos" aria-selected="false">☁️ Datos</button>
@@ -186,6 +187,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <section class="view" id="v-inmuebles" role="tabpanel" hidden></section>
     <section class="view" id="v-contratos" role="tabpanel" hidden></section>
     <section class="view" id="v-cuentas" role="tabpanel" hidden></section>
+    <section class="view" id="v-amort" role="tabpanel" hidden></section>
     <section class="view" id="v-bandeja" role="tabpanel" hidden></section>
     <section class="view" id="v-titulares" role="tabpanel" hidden></section>
     <section class="view" id="v-datos" role="tabpanel" hidden>
@@ -313,13 +315,13 @@ function seed(){
     firma:"", inicio:"", duracion:5, fin:"", renta:null, diaPago:"", indice:"IPC", actRef:"", ultAct:"", fijo:null, historial:[],
     fianza:{ importe:null, org:"", fecha:"", ref:"" }, regimen:"lau19", habitual:true, red:"0.6", docs:[], notas:"", ...extra });
   return {
-    app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{}, reglas:[], archivo:[],
+    app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{}, reglas:[], archivo:[], bienes:[],
     titulares:[{ id:tp, nombre:"Padre", nif:"", rel:"Padre" }, { id:tm, nombre:"Madre", nif:"", rel:"Madre" }],
     declaracion:{ tipo:"conjunta", miembros:[tp, tm] },
     inmuebles:[
       inm(i1, "Pedroñeras 10", "", "", tit50()),
       inm(i2, "Málaga · Teresa Aspiazu y Paúl", "Málaga", "Málaga", tit50()),
-      inm(i3, "Vallecas", "Madrid", "Madrid", [{ t:tp, pct:100, reg:"privativo" }], "Renta antigua: más de 60 años con el mismo inquilino. Ya no se amortiza.")
+      Object.assign(inm(i3, "Vallecas", "Madrid", "Madrid", [{ t:tp, pct:100, reg:"privativo" }], "Renta antigua: más de 60 años con el mismo inquilino. Ya no se amortiza."), { amort:{ completo:true } })
     ],
     contratos:[
       ct(i1, 1),
@@ -336,7 +338,8 @@ function normalize(d){
   d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
   for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; }
-  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.archivo ||= [];
+  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.archivo ||= []; d.bienes ||= [];
+  for (const m of d.inmuebles) if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true };
   for (const x of d.movs) x.docs ||= [];
   return d;
 }
@@ -426,6 +429,8 @@ function avisos(){
     if (malos) add("media", "🪪", `${name}: NIF de inquilino incorrecto`, "La letra no cuadra con el número. La declaración pide el NIF de cada arrendatario.", { ct:c.id });
     else if (sinNif) add("info", "🪪", `${name}: ${sinNif === 1 ? "falta el NIF de un inquilino" : `faltan ${sinNif} NIF de inquilinos`}`, "La declaración pide el NIF de cada arrendatario.", { ct:c.id });
   }
+  { const y = new Date().getFullYear();
+    for (const m of db.inmuebles){ const a = amortMuebles(m, y), b = amortMuebles(m, y + 1); if (a - b >= 100) add("media", "📉", `${m.alias}: en ${y + 1} la amortización de muebles baja ${eur(a - b)}`, `Este año terminan de amortizarse algunos muebles. Pasará de ${eur(a)} a ${eur(b)}: el alquiler tributará un poco más.`, { tab:"amort" }); } }
   const rank = { alta:0, media:1, info:2 };
   return out.sort((a, b) => rank[a.nivel] - rank[b.nivel]);
 }
@@ -457,7 +462,7 @@ function renderResumen(){
     <div class="tile"><div class="k">Inmuebles</div><div class="v">${db.inmuebles.length}</div><div class="sub">${alq.length} ${plural(alq.length, "arrendado", "arrendados")}</div></div>
     <div class="tile"><div class="k">Renta al mes</div><div class="v">${mensual ? eur(mensual) : "—"}</div><div class="sub">Contratos vigentes</div></div>
     <div class="tile"><div class="k">Renta al año</div><div class="v">${mensual ? eur(mensual * 12) : "—"}</div><div class="sub">A la renta actual</div></div>
-    <div class="tile"><div class="k">Neto ${new Date().getFullYear()}</div><div class="v">${(() => { const y = new Date().getFullYear(), n = db.movs.some(x => +x.fecha?.slice(0, 4) === y) ? db.inmuebles.reduce((a, m) => a + cuentas(m, y).neto, 0) : null; return n == null ? "—" : eur(n); })()}</div><div class="sub">Rendimiento antes de amortizar</div></div>
+    <div class="tile"><div class="k">Neto ${new Date().getFullYear()}</div><div class="v">${(() => { const y = new Date().getFullYear(), n = db.movs.some(x => +x.fecha?.slice(0, 4) === y) ? db.inmuebles.reduce((a, m) => a + cuentas(m, y).netoRed, 0) : null; return n == null ? "—" : eur(n); })()}</div><div class="sub">Rendimiento neto reducido</div></div>
     <div class="tile"><div class="k">Avisos</div><div class="v">${av.filter(a => a.nivel !== "info").length}</div><div class="sub">${av.filter(a => a.nivel === "info").length} datos por completar</div></div>
   </div>`;
   if (db.seed) h += `<div class="panel"><div class="panel-head"><h2>👋 Primeros pasos</h2></div><p class="note">He dejado preparados vuestros tres pisos, los dos titulares y un contrato por piso, con lo que sé. Entra en cada uno y completa los datos: la referencia catastral y el valor catastral están en el recibo del IBI; las fechas, la renta y la fianza, en el contrato.</p></div>`;
@@ -487,8 +492,8 @@ function renderResumen(){
   h += `</div>`;
   h += `<div class="panel"><div class="panel-head"><h2>🗺️ Lo que viene</h2></div><ul class="roadmap">
     <li><span class="chip ok">Fase 1</span><span>Titulares, inmuebles, inquilinos, contratos y avisos. <b>Ya está.</b></span></li>
+    <li><span class="chip ok">Fase 2</span><span>Amortizaciones: inmueble al 3 %, muebles al 10 % con prorrateo y bajas, e importar tu hoja de Google. <b>Ya está.</b></span></li>
     <li><span class="chip ok">Fase 3</span><span>Ingresos y gastos por casillas de la Renta, con límite de intereses y reparaciones y prorrateo por días. <b>Ya está.</b></span></li>
-    <li><span class="chip">Fase 2</span><span>Amortizaciones: inmueble al 3 %, muebles al 10 % con prorrateo y bajas, e importar tu hoja de Google.</span></li>
     <li><span class="chip ok">Fase 4</span><span>Bandeja de documentos: extractos, recibos y facturas, con detección del piso, de la categoría y de duplicados. <b>Ya está.</b></span></li>
     <li><span class="chip">Fase 5</span><span>Carta de subida para el inquilino y renovaciones.</span></li>
     <li><span class="chip">Fase 6</span><span>Resumen fiscal de la declaración conjunta y exportación a Mi Renta y a Google Sheets.</span></li>
@@ -560,7 +565,7 @@ function renderTitulares(){
   $("v-titulares").innerHTML = h;
 }
 
-function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderBandeja(); renderTitulares(); }
+function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderAmort(); renderBandeja(); renderTitulares(); }
 
 // =====================================================================
 // Navegación
@@ -904,14 +909,14 @@ function diasAlquilado(m, y){
     if (e >= s) tramos.push([s, e]);
   }
   tramos.sort((p, q) => p[0] - q[0]);
-  let dias = 0, cur = null;
+  let dias = 0, cur = null; const unidos = [];
   for (const t of tramos){
     if (!cur){ cur = [...t]; continue; }
     if (t[0] <= new Date(cur[1].getTime() + 86400000)){ if (t[1] > cur[1]) cur[1] = t[1]; }
-    else { dias += Math.round((cur[1] - cur[0]) / 86400000) + 1; cur = [...t]; }
+    else { unidos.push(cur); dias += Math.round((cur[1] - cur[0]) / 86400000) + 1; cur = [...t]; }
   }
-  if (cur) dias += Math.round((cur[1] - cur[0]) / 86400000) + 1;
-  return { dias, tot, supuesto };
+  if (cur){ unidos.push(cur); dias += Math.round((cur[1] - cur[0]) / 86400000) + 1; }
+  return { dias, tot, supuesto, tramos:unidos };
 }
 // Cuentas de un inmueble en un año: lo que irá a la declaración (antes de amortizaciones)
 function cuentas(m, y){
@@ -931,7 +936,14 @@ function cuentas(m, y){
   const limTot = limit + pendAnt, limDed = Math.min(limTot, Math.max(0, ingresos)), exceso = limTot - limDed;
   const otros = [...grupos.values()].reduce((a, v) => a + v, 0);
   const neto = ingresos - limDed - otros;
-  return { ingresos, grupos, limit, pendAnt, limDed, exceso, otros, neto, aparte, prorrateado, dias, tot, supuesto, n:ms.length };
+  const amI = amortInmAnio(m, y).v, amM = amortMuebles(m, y);
+  const netoAm = neto - amI - amM;
+  const ct = ctsOf(m).filter(c => c.estado === "vigente")[0] || ctsOf(m)[0];
+  const redPct = ct && ct.habitual && m.tipo === "vivienda" ? parseFloat(ct.red) || 0 : 0;
+  const reduccion = netoAm > 0 ? Math.round(netoAm * redPct * 100) / 100 : 0;
+  const vacio = Math.max(0, tot - dias);
+  const imputacion = m.situacion !== "habitual" && vacio && +m.cat.total ? Math.round(m.cat.total * (m.cat.revisado !== false ? 0.011 : 0.02) * vacio / tot * 100) / 100 : 0;
+  return { ingresos, grupos, limit, pendAnt, limDed, exceso, otros, neto, amI, amM, netoAm, redPct, reduccion, netoRed:netoAm - reduccion, imputacion, vacio, aparte, prorrateado, dias, tot, supuesto, n:ms.length };
 }
 
 function renderCuentas(){
@@ -948,23 +960,28 @@ function renderCuentas(){
   // Resumen por inmueble
   const tot = { ing:0, ded:0, neto:0 };
   h += `<div class="cards">` + inms.map(m => {
-    const r = cuentas(m, curYear); tot.ing += r.ingresos; tot.ded += r.limDed + r.otros; tot.neto += r.neto;
+    const r = cuentas(m, curYear); tot.ing += r.ingresos; tot.ded += r.limDed + r.otros + r.amI + r.amM; tot.neto += r.netoRed;
     const filas = [...r.grupos.entries()].filter(([, v]) => v > 0.004).map(([g, v]) => `<dt>${esc(g)}</dt><dd class="num">${eur(v)}</dd>`).join("");
     return `<div class="card"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${r.dias} de ${r.tot} días alquilado${r.supuesto ? " (sin fecha de inicio: cuento el año entero)" : ""}</div></div><span class="chip ${r.n ? "acc" : ""}">${r.n} ${plural(r.n, "apunte", "apuntes")}</span></div>
       <dl class="kv">
         <dt><b>Ingresos íntegros</b></dt><dd class="num"><b>${eur(r.ingresos)}</b></dd>
         ${r.limit || r.pendAnt ? `<dt>Intereses + reparación${r.pendAnt ? " (con lo pendiente de años anteriores)" : ""}</dt><dd class="num">${eur(r.limDed)}</dd>` : ""}
         ${filas}
-        <dt><b>Rendimiento neto</b></dt><dd class="num"><b>${eur(r.neto)}</b></dd>
+        ${r.amI ? `<dt>Amortización del inmueble</dt><dd class="num">${eur(r.amI)}</dd>` : ""}
+        ${r.amM ? `<dt>Amortización de muebles</dt><dd class="num">${eur(r.amM)}</dd>` : ""}
+        <dt><b>Rendimiento neto</b></dt><dd class="num"><b>${eur(r.netoAm)}</b></dd>
+        ${r.reduccion ? `<dt>Reducción ${fmt(r.redPct * 100, 0)} % (vivienda)</dt><dd class="num">−${eur(r.reduccion)}</dd>` : ""}
+        <dt><b>Rendimiento neto reducido</b></dt><dd class="num"><b>${eur(r.netoRed)}</b></dd>
+        ${r.imputacion ? `<dt>Imputación de rentas (${r.vacio} días vacío)</dt><dd class="num">${eur(r.imputacion)}</dd>` : ""}
       </dl>
       ${r.exceso > 0.004 ? `<div class="alert media"><span class="ic">↪️</span><div><b>${eur(r.exceso)} pasan a los 4 años siguientes</b>Intereses y reparaciones no pueden superar los ingresos del inmueble; lo que sobra se deduce más adelante.</div><span></span></div>` : ""}
       ${r.prorrateado > 0.004 ? `<p class="note">Los gastos de todo el año (IBI, comunidad, seguro, intereses) se deducen solo por los días alquilado: ${eur(r.prorrateado)} no cuentan.</p>` : ""}
-      ${r.aparte > 0.004 ? `<p class="note">${eur(r.aparte)} en muebles, mejoras o no deducibles quedan fuera del año (los muebles y mejoras se amortizarán en la fase 2).</p>` : ""}
-      <p class="note">Sin amortizaciones todavía (fase 2). ${m.tit.map(x => `${esc(tById(x.t)?.nombre || "?")}: ${eur(r.neto * (+x.pct || 0) / 100)}`).join(" · ")}</p>
+      ${r.aparte > 0.004 ? `<p class="note">${eur(r.aparte)} en muebles, mejoras o no deducibles no son gasto del año: los muebles y mejoras van por amortización.</p>` : ""}
+      <p class="note">Por titular: ${m.tit.map(x => `${esc(tById(x.t)?.nombre || "?")} ${eur(r.netoRed * (+x.pct || 0) / 100)}`).join(" · ")}</p>
       <div class="toolbar"><button type="button" data-gen="${m.id}">⟳ Rentas del año desde el contrato</button><button type="button" class="ghost" data-arr="${m.id}">Pendiente de años anteriores${r.pendAnt ? ": " + eur(r.pendAnt) : ""}</button></div>
     </div>`;
   }).join("") + `</div>`;
-  if (inms.length > 1) h += `<div class="tiles"><div class="tile"><div class="k">Ingresos ${curYear}</div><div class="v">${eur(tot.ing)}</div></div><div class="tile"><div class="k">Gastos deducibles</div><div class="v">${eur(tot.ded)}</div></div><div class="tile"><div class="k">Rendimiento neto</div><div class="v">${eur(tot.neto)}</div><div class="sub">Antes de amortizaciones y reducción</div></div></div>`;
+  if (inms.length > 1) h += `<div class="tiles"><div class="tile"><div class="k">Ingresos ${curYear}</div><div class="v">${eur(tot.ing)}</div></div><div class="tile"><div class="k">Gastos y amortizaciones</div><div class="v">${eur(tot.ded)}</div></div><div class="tile"><div class="k">Neto reducido</div><div class="v">${eur(tot.neto)}</div><div class="sub">Con amortizaciones y reducción</div></div></div>`;
   // Lista de apuntes
   const ms = movsOf(curYear, curInm).sort((a, b) => b.fecha.localeCompare(a.fecha) || (a.tipo === b.tipo ? 0 : a.tipo === "ingreso" ? 1 : -1));
   h += `<div class="panel"><div class="panel-head"><h2>📒 Apuntes de ${curYear}</h2><span class="sub">${ms.length}</span></div>`;
@@ -1089,6 +1106,242 @@ function allDocs(){
   for (const a of db.archivo || []) out.push({ d:a, owner:null, path:["Extractos del banco", String(a.year || "Sin año")] });
   return out;
 }
+
+// =====================================================================
+// Fase 2 · Amortizaciones: el inmueble (3 %) y los muebles, electrodomésticos y mejoras
+// =====================================================================
+const TIPOS_BIEN = [["mueble","Mueble o electrodoméstico (10 %)"],["mejora","Mejora u obra en el inmueble (3 %)"],["instalacion","Instalación: caldera, aire, ascensor… (10 %)"],["otro","Otro"]];
+const COEF_DEF = { mueble:10, mejora:3, instalacion:10, otro:10 };
+const DAY = 86400000;
+const diasAnio = y => Math.round((new Date(y, 11, 31) - new Date(y, 0, 1)) / DAY) + 1;
+// Días de un periodo [a, b] (fechas ISO, b incluida) que caen en los tramos alquilados del año
+function diasAlquiladoEntre(m, y, a, b){
+  const { tramos } = diasAlquilado(m, y);
+  const s0 = a ? toDate(a) : new Date(y, 0, 1), e0 = b ? toDate(b) : new Date(y, 11, 31);
+  let n = 0;
+  for (const [s, e] of tramos){ const ss = s > s0 ? s : s0, ee = e < e0 ? e : e0; if (ee >= ss) n += Math.round((ee - ss) / DAY) + 1; }
+  return n;
+}
+const altaYear = b => +String(b.alta || "").slice(0, 4) || null;
+const bajaYear = b => b.baja?.fecha ? +b.baja.fecha.slice(0, 4) : null;
+// Amortización de un bien en un año. Si está en el historial (lo que se declaró), manda el historial.
+// Los años anteriores a usar la app de un bien importado se calculan como en tu hoja: el % entero cada año.
+function amortBien(b, y, memo = {}){
+  if (y in memo) return memo[y];
+  const ay = altaYear(b), m = iById(b.inm);
+  let v = 0;
+  if (!ay || y < ay || !m || !(+b.importe > 0)) v = 0;
+  else if (b.hist && b.hist[y] != null) v = +b.hist[y];
+  else {
+    const by = bajaYear(b);
+    if (by != null && y > by) v = 0;
+    else {
+      const anual = (+b.importe) * (+b.coef || COEF_DEF[b.tipo] || 10) / 100;
+      const primeroApp = b.importado ? Math.min(...Object.keys(b.hist || {}).map(Number).concat([new Date().getFullYear()])) : -Infinity;
+      if (b.importado && y < primeroApp) v = (by != null && y === by) ? 0 : anual;
+      else {
+        const finUso = b.baja?.fecha ? iso(new Date(toDate(b.baja.fecha).getTime() - DAY)) : null;
+        v = anual * diasAlquiladoEntre(m, y, b.alta, finUso) / diasAnio(y);
+      }
+      const acum = acumBien(b, y, memo);
+      v = Math.max(0, Math.min(v, (+b.importe) - acum));
+    }
+  }
+  return memo[y] = Math.round(v * 100) / 100;
+}
+function acumBien(b, y, memo = {}){ let s = 0; const ay = altaYear(b); if (!ay) return 0; for (let k = ay; k < y; k++) s += amortBien(b, k, memo); return s; }
+function estadoBien(b, y){
+  const memo = {}, acum = acumBien(b, y, memo), este = amortBien(b, y, memo), pend = Math.max(0, (+b.importe || 0) - acum - este);
+  const by = bajaYear(b);
+  const est = by != null && y >= by ? "baja" : pend < 0.01 && acum + este > 0 ? (este > 0 ? "ultimo" : "amortizado") : "activo";
+  return { acum, este, pend, est, pendBaja: b.baja ? Math.max(0, (+b.importe || 0) - acumBien(b, by + 1, {})) : 0 };
+}
+// Inmueble: calculado (3 % de la base) o la cifra fija de tu hoja; prorrateado por días alquilado
+function amortInmAnio(m, y){
+  const a = m.amort || {};
+  if (a.completo) return { v:0, anual:0, fuente:"Ya amortizado" };
+  if (a.hist && a.hist[y] != null) return { v:+a.hist[y], anual:+a.hist[y], fuente:"Lo declarado ese año" };
+  const anual = a.modo === "manual" ? +a.anual || 0 : amortInm(m)?.anual || 0;
+  if (!anual) return { v:0, anual:0, fuente:"Faltan datos" };
+  const { dias, tot } = diasAlquilado(m, y);
+  return { v:Math.round(anual * dias / tot * 100) / 100, anual, fuente:a.modo === "manual" ? "Cifra fija" : "3 % calculado", dias, tot };
+}
+const bienesOf = inm => (db.bienes || []).filter(b => b.inm === inm);
+function amortMuebles(m, y){ return Math.round(bienesOf(m.id).reduce((s, b) => s + amortBien(b, y), 0) * 100) / 100; }
+
+function renderAmort(){
+  const el = $("v-amort"); if (!el) return;
+  if (curInm !== "todos" && !iById(curInm)) curInm = "todos";
+  const ys = []; for (let y = new Date().getFullYear() + 1; y >= new Date().getFullYear() - 6; y--) ys.push(y);
+  if (!ys.includes(curYear)) ys.push(curYear);
+  const inms = curInm === "todos" ? db.inmuebles : [iById(curInm)];
+  const sinAlta = db.movs.filter(x => x.tipo === "gasto" && (x.cat === "mueble" || x.cat === "mejora") && !(db.bienes || []).some(b => b.mov === x.id));
+  let h = `<div class="panel-head"><h2>📉 Amortizaciones</h2><div class="toolbar"><button type="button" class="primary" id="addBien">＋ Mueble o mejora</button><button type="button" id="impAm">⬆️ Importar tu hoja</button><input type="file" id="impAmFile" accept=".xlsx,.xls,.ods" hidden></div></div>
+    <div class="fields" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      <label class="field">Año<select id="amYear">${ys.sort((a, b) => b - a).map(y => `<option value="${y}"${y === curYear ? " selected" : ""}>${y}</option>`).join("")}</select></label>
+      <label class="field">Inmueble<select id="amInm"><option value="todos">Todos</option>${db.inmuebles.map(m => `<option value="${m.id}"${m.id === curInm ? " selected" : ""}>${esc(m.alias)}</option>`).join("")}</select></label>
+    </div>`;
+  if (sinAlta.length) h += `<div class="alert media"><span class="ic">🛋️</span><div><b>${sinAlta.length} ${plural(sinAlta.length, "compra apuntada sin dar de alta", "compras apuntadas sin dar de alta")}</b>${sinAlta.map(x => `${esc(x.concepto || "Compra")} (${fdate(x.fecha)}, ${eur(x.importe)})`).join(" · ")}</div><button type="button" id="altaMovs">Dar de alta</button></div>`;
+  for (const m of inms){
+    const ai = amortInmAnio(m, curYear), bs = bienesOf(m.id), tm = amortMuebles(m, curYear);
+    const filas = bs.map(b => ({ b, e:estadoBien(b, curYear) })).filter(({ b, e }) => !(e.est === "baja" && bajaYear(b) < curYear - 1) && !(e.est === "amortizado" && e.este === 0 && e.acum === 0 && altaYear(b) > curYear))
+      .sort((p, q) => (p.b.alta || "").localeCompare(q.b.alta || ""));
+    const chip = e => e.est === "baja" ? `<span class="chip">Baja</span>` : e.est === "ultimo" ? `<span class="chip warn">Último año</span>` : e.est === "amortizado" ? `<span class="chip ok">Amortizado</span>` : "";
+    h += `<div class="panel"><div class="panel-head"><h2>${esc(m.alias)}</h2><span class="chip acc">${eur(ai.v + tm)} en ${curYear}</span></div>
+      <div class="card" style="background:var(--bg)"><div class="card-head"><h3>🏠 Inmueble (3 %)</h3><button type="button" class="ghost" data-am-inm="${m.id}">✎ Ajustar</button></div>
+        <dl class="kv"><dt>Cómo se calcula</dt><dd>${esc(ai.fuente)}</dd>${ai.anual ? `<dt>Al año completo</dt><dd class="num">${eur(ai.anual)}</dd>` : ""}${ai.dias != null ? `<dt>Días alquilado</dt><dd class="num">${ai.dias} de ${ai.tot}</dd>` : ""}<dt><b>${curYear}</b></dt><dd class="num"><b>${eur(ai.v)}</b></dd></dl>
+        ${ai.fuente === "Faltan datos" ? `<p class="note">Pon el valor catastral de la construcción en la ficha del inmueble, o la cifra fija que declaras («✎ Ajustar»).</p>` : ""}</div>
+      <h3 style="margin:14px 0 8px">🛋️ Muebles, electrodomésticos y mejoras</h3>
+      ${filas.length ? `<ul class="mini">${filas.map(({ b, e }) => `<li style="align-items:flex-start"><div class="grow" style="white-space:normal"><div><b>${esc(b.concepto)}</b> ${chip(e)}${b.docs?.length ? " 📎" : ""}</div><div class="sub">${b.alta ? (b.alta.endsWith("-01-01") && b.fechaAprox ? b.alta.slice(0, 4) : fdate(b.alta)) : "Sin fecha"} · ${eur(b.importe)} · ${fmt(b.coef, b.coef % 1 ? 2 : 0)} %${e.est === "baja" ? ` · baja ${fdate(b.baja.fecha)}${e.pendBaja > 0.01 ? `, quedaron ${eur(e.pendBaja)} sin amortizar` : ""}` : ` · amortizado ${eur(e.acum + e.este)} · quedan ${eur(e.pend)}`}</div></div><span class="num" style="white-space:nowrap;font-weight:600">${eur(e.este)}</span><button type="button" class="ghost" data-bien="${b.id}" aria-label="Editar">✎</button></li>`).join("")}</ul>` : `<p class="note">No hay muebles ni mejoras. Añádelos o importa tu hoja.</p>`}
+      <div class="row tot" style="display:flex;justify-content:space-between;margin-top:10px;font-weight:600"><span>Muebles y mejoras en ${curYear}</span><span class="num">${eur(tm)}</span></div>
+      ${(() => { const sig = amortMuebles(m, curYear + 1); return sig < tm - 0.5 ? `<p class="note" style="margin-top:6px">📉 En ${curYear + 1} bajará a ${eur(sig)} (${eur(tm - sig)} menos) porque algunos bienes terminan de amortizarse.</p>` : ""; })()}
+    </div>`;
+  }
+  h += `<div class="panel"><p class="note">La amortización de los muebles se hace sobre lo que costaron con IVA y empieza el día de la compra; el primer y el último año van por días. Nunca se amortiza más de lo que costó. Si das de baja algo antes de tiempo, la app te dice cuánto quedó sin amortizar: ese importe lo revisaremos aparte, porque no está claro que sea un gasto del alquiler.</p></div>`;
+  el.innerHTML = h;
+}
+
+function editBien(id, pre){
+  const isNew = !id;
+  const b = isNew ? { id:"b-" + uid(), inm:curInm !== "todos" ? curInm : db.inmuebles[0]?.id, tipo:"mueble", concepto:"", alta:todayIso(), importe:null, coef:10, proveedor:"", nif:"", factura:"", baja:null, hist:{}, docs:[], ...(pre || {}) } : JSON.parse(JSON.stringify(db.bienes.find(x => x.id === id)));
+  const e = isNew ? null : estadoBien(b, curYear);
+  const histTxt = () => Object.keys(b.hist || {}).sort().map(y => `${y}: ${eur(b.hist[y])}`).join(" · ");
+  openDlg(isNew ? "Nuevo mueble o mejora" : b.concepto, `
+    <div class="fields">
+      <label class="field">Inmueble<select id="b-inm">${db.inmuebles.map(m => `<option value="${m.id}"${m.id === b.inm ? " selected" : ""}>${esc(m.alias)}</option>`).join("")}</select></label>
+      ${fSel("b-tipo", "Tipo", TIPOS_BIEN, b.tipo)}
+      <div class="wide">${fText("b-con", "Qué es", b.concepto, 'placeholder="Ej.: Lavadora Bosch"')}</div>
+      ${fDate("b-alta", "Fecha de compra", b.alta)}
+      ${fMoney("b-imp", "Importe con IVA (€)", b.importe)}
+      ${fMoney("b-coef", "Porcentaje anual (%)", b.coef, "Muebles e instalaciones: 10 %. Mejoras del inmueble: 3 %.")}
+      ${fText("b-prov", "Proveedor", b.proveedor)}
+      ${fText("b-nif", "NIF del proveedor", b.nif, 'autocapitalize="characters"')}
+      ${fText("b-fra", "Nº de factura", b.factura)}
+    </div>
+    <fieldset><legend>Baja</legend><div class="fields">
+      ${fDate("b-baja", "Fecha de baja", b.baja?.fecha || "", "Si se rompe, se vende o se retira. Desde ese día deja de amortizarse.")}
+      ${fText("b-mot", "Motivo", b.baja?.motivo || "", 'placeholder="Ej.: Se rompió y se compró otra"')}
+    </div></fieldset>
+    ${histTxt() ? `<p class="note">Lo declarado en años anteriores (de tu hoja): ${histTxt()}.</p>` : ""}
+    ${e ? `<div class="calc">En ${curYear}: <b>${eur(e.este)}</b>. Amortizado hasta ahora: <b>${eur(e.acum + e.este)}</b> de ${eur(b.importe)}. Queda: <b>${eur(e.pend)}</b>.</div>` : ""}`, () => {
+    const imp = money("b-imp");
+    if (!val("b-con") || !imp || !val("b-alta")){ toast("Pon qué es, la fecha de compra y el importe."); return false; }
+    Object.assign(b, { inm:val("b-inm"), tipo:val("b-tipo"), concepto:val("b-con"), alta:val("b-alta"), importe:imp, coef:money("b-coef") || COEF_DEF[val("b-tipo")], proveedor:val("b-prov"), nif:val("b-nif").toUpperCase(), factura:val("b-fra"), baja:val("b-baja") ? { fecha:val("b-baja"), motivo:val("b-mot") } : null });
+    db.bienes ||= [];
+    const i = db.bienes.findIndex(x => x.id === b.id); if (i < 0) db.bienes.push(b); else db.bienes[i] = b;
+    toast("✓ Guardado");
+  }, isNew ? "" : `<button type="button" class="danger" id="delBien">Eliminar</button>`);
+  $("dlgBody").oninput = ev => { if (ev.target.id === "b-tipo") $("b-coef").value = fmt(COEF_DEF[ev.target.value], 2); };
+  if (!isNew) armDelete($("delBien"), () => { db.bienes = db.bienes.filter(x => x.id !== b.id); $("dlg").close(); save(); });
+}
+function editAmortInm(inmId){
+  const m = iById(inmId), a = m.amort || {}, calc = amortInm(m);
+  openDlg(`${m.alias} · amortización`, `
+    <div class="fields">
+      ${fSel("ai-modo", "Cómo se calcula", [["calc","3 % calculado con la ficha del inmueble"],["manual","Cifra fija (la que vengo declarando)"]], a.modo || (a.anual ? "manual" : "calc"))}
+      ${fMoney("ai-anual", "Cifra fija al año completo (€)", a.anual, "Al 100 % del inmueble, antes de repartir entre los titulares.")}
+      <label class="check wide"><input type="checkbox" id="ai-comp"${a.completo ? " checked" : ""}> Ya está totalmente amortizado (no se amortiza más)</label>
+    </div>
+    <div class="calc">${calc ? `Con la ficha: ${eur(calc.anual)} al año (3 % de ${eur(calc.base)}).` : "Para calcularlo, pon en la ficha el valor catastral total y el de la construcción y el coste de adquisición."}</div>
+    ${Object.keys(a.hist || {}).length ? `<p class="note">Declarado en años anteriores: ${Object.keys(a.hist).sort().map(y => `${y}: ${eur(a.hist[y])}`).join(" · ")}.</p>` : ""}
+    <p class="note">La amortización del año se reparte por los días que estuvo alquilado.</p>`, () => {
+    m.amort = { ...a, modo:val("ai-modo"), anual:money("ai-anual"), completo:$("ai-comp").checked };
+    toast("✓ Guardado");
+  });
+}
+
+// ---------- Importar la hoja de amortizaciones (descargada de Google Sheets como Excel) ----------
+const xDate = v => {
+  if (v instanceof Date && !isNaN(v)) return { iso:iso(v), aprox:false };
+  if (typeof v === "number"){ if (v >= 1990 && v <= 2100) return { iso:`${v}-01-01`, aprox:true }; if (v > 20000) { const d = new Date(Math.round((v - 25569) * DAY)); return { iso:iso(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())), aprox:false }; } }
+  const s = String(v || "").trim(); if (/^(19|20)\d{2}$/.test(s)) return { iso:`${s}-01-01`, aprox:true };
+  const d = getDateIso(s); return d ? { iso:d, aprox:false } : null;
+};
+const xNum = v => typeof v === "number" ? v : parseAny(v);
+function leerHojaAmort(rows){
+  const out = { inmHist:{}, bienes:[] };
+  const txt = r => r.map(c => String(c ?? "")).join(" ").toLowerCase();
+  const ri = rows.findIndex(r => /amortizaciones inmobiliarias/.test(txt(r)));
+  if (ri >= 0){
+    const yr = rows.slice(ri + 1, ri + 4).findIndex(r => r.filter(c => /^(19|20)\d{2}$/.test(String(c).trim())).length >= 3);
+    if (yr >= 0){
+      const yrow = rows[ri + 1 + yr], vrow = rows[ri + 2 + yr] || [];
+      yrow.forEach((c, i) => { const y = +String(c).trim(); const v = xNum(vrow[i]); if (y >= 1990 && y < new Date().getFullYear() && !isNaN(v) && v > 0) out.inmHist[y] = Math.round(v * 100) / 100; });
+    }
+  }
+  const hi = rows.findIndex(r => { const t = r.map(c => String(c ?? "").toLowerCase().trim()); return t.includes("fecha") && t.some(c => /concepto/.test(c)) && t.some(c => /importe/.test(c)); });
+  if (hi < 0) return out;
+  const H = rows[hi].map(c => String(c ?? "").toLowerCase().trim());
+  const col = re => H.findIndex(c => re.test(c));
+  const cF = col(/^fecha/), cC = col(/concepto/), cP = col(/proveedor/), cN = col(/^nif/), cR = col(/fra|factura/), cI = col(/importe/);
+  const yc = H.map((c, i) => { const m = c.match(/renta\s*(20\d{2})/); return m ? [i, +m[1]] : null; }).filter(Boolean);
+  for (const r of rows.slice(hi + 1)){
+    const con = String(r[cC] ?? "").replace(/\s+/g, " ").trim(), imp = xNum(r[cI]);
+    if (!con || isNaN(imp) || imp <= 0) continue;
+    const f = xDate(r[cF]); if (!f) continue;
+    const hist = {}; let baja = null, coefs = [];
+    for (const [i, y] of yc){
+      const v = r[i], s = String(v ?? "").trim();
+      if (/^baja$/i.test(s)){ if (!baja) baja = `${y}-01-01`; continue; }
+      const n = typeof v === "number" ? v : /^[\d.,\s€]+$/.test(s) ? parseAny(s) : NaN;
+      if (isNaN(n) || n <= 0) continue;
+      coefs.push(n / imp * 100);
+      if (y < new Date().getFullYear()) hist[y] = Math.round(n * 100) / 100; // los años aún sin declarar los calcula la app
+    }
+    const coef = coefs.length ? Math.round(coefs.reduce((a, b) => a + b, 0) / coefs.length) : 10;
+    const nif = String(r[cN] ?? "").trim(), fra = String(r[cR] ?? "").trim();
+    out.bienes.push({ concepto:con, alta:f.iso, fechaAprox:f.aprox, importe:Math.round(imp * 100) / 100, coef:[3, 10].includes(coef) ? coef : 10, proveedor:String(r[cP] ?? "").trim(), nif:nif === "-" ? "" : nif, factura:fra === "-" ? "" : fra, hist, baja:baja ? { fecha:baja, motivo:"Baja (de tu hoja)" } : null });
+  }
+  return out;
+}
+const hojaAInm = name => { const w = words(name); let best = null, bs = 0; for (const m of db.inmuebles){ const ws = new Set([...words(m.alias), ...words(m.direccion)]); const s = w.filter(x => ws.has(x)).length; if (s > bs){ bs = s; best = m; } } return best; };
+async function importarHoja(f){
+  try {
+    await needXlsx();
+    const wb = XLSX.read(await f.arrayBuffer(), { type:"array", cellDates:true });
+    const hojas = wb.SheetNames.map(n => ({ n, d:leerHojaAmort(XLSX.utils.sheet_to_json(wb.Sheets[n], { header:1, raw:true, defval:"" })) })).filter(x => x.d.bienes.length || Object.keys(x.d.inmHist).length);
+    if (!hojas.length){ toast("No he encontrado tablas de amortizaciones en ese archivo."); return; }
+    openDlg("Importar amortizaciones", `<p class="note">He encontrado ${hojas.length} ${plural(hojas.length, "hoja", "hojas")}. Comprueba a qué inmueble va cada una.</p>` + hojas.map((x, i) => {
+      const m = hojaAInm(x.n), hist = Object.keys(x.d.inmHist);
+      return `<fieldset><legend>Hoja «${esc(x.n)}»</legend><label class="field">Inmueble<select id="ih-${i}"><option value="">No importar</option>${db.inmuebles.map(o => `<option value="${o.id}"${o === m ? " selected" : ""}>${esc(o.alias)}</option>`).join("")}</select></label>
+        <p class="note">${x.d.bienes.length} ${plural(x.d.bienes.length, "mueble", "muebles")} (${x.d.bienes.filter(b => b.baja).length} de baja)${hist.length ? ` · amortización del inmueble de ${hist.length} años (última, ${hist.sort().at(-1)}: ${eur(x.d.inmHist[hist.at(-1)])})` : ""}.</p></fieldset>`;
+    }).join(""), () => {
+      let nb = 0, rep = 0; db.bienes ||= [];
+      hojas.forEach((x, i) => {
+        const inm = val(`ih-${i}`); if (!inm) return;
+        const m = iById(inm), ys = Object.keys(x.d.inmHist).map(Number).sort();
+        if (ys.length){ m.amort ||= {}; m.amort.hist = { ...(m.amort.hist || {}), ...x.d.inmHist }; if (!m.amort.completo && m.amort.modo !== "calc"){ m.amort.modo = "manual"; m.amort.anual = x.d.inmHist[ys.at(-1)]; } }
+        for (const b of x.d.bienes){
+          const ya = db.bienes.find(o => o.inm === inm && o.alta === b.alta && Math.abs(o.importe - b.importe) < 0.01 && norm(o.concepto) === norm(b.concepto));
+          if (ya){ ya.hist = { ...(ya.hist || {}), ...b.hist }; if (b.baja && !ya.baja) ya.baja = b.baja; rep++; continue; }
+          db.bienes.push({ id:"b-" + uid(), inm, tipo:"mueble", importado:true, docs:[], ...b }); nb++;
+        }
+      });
+      toast(`✓ ${nb} ${plural(nb, "bien importado", "bienes importados")}${rep ? ` y ${rep} ${plural(rep, "actualizado", "actualizados")}` : ""}.`);
+    });
+    $("dlgSave").textContent = "Importar";
+    $("dlg").addEventListener("close", () => $("dlgSave").textContent = "Guardar", { once:true });
+  } catch(e){ toast("No he podido leer el archivo: " + e.message); }
+}
+document.addEventListener("click", e => {
+  if (!e.target.closest("#v-amort")) return;
+  if (e.target.closest("#addBien")) return editBien();
+  if (e.target.closest("#impAm")) return $("impAmFile").click();
+  const bi = e.target.closest("[data-bien]"); if (bi) return editBien(bi.dataset.bien);
+  const ai = e.target.closest("[data-am-inm]"); if (ai) return editAmortInm(ai.dataset.amInm);
+  if (e.target.closest("#altaMovs")){
+    db.bienes ||= []; let n = 0;
+    for (const x of db.movs.filter(x => x.tipo === "gasto" && (x.cat === "mueble" || x.cat === "mejora") && !db.bienes.some(b => b.mov === x.id))){
+      db.bienes.push({ id:"b-" + uid(), mov:x.id, inm:x.inm, tipo:x.cat, concepto:x.concepto || "Compra", alta:x.fecha, importe:x.importe, coef:COEF_DEF[x.cat], proveedor:x.proveedor || "", nif:x.nif || "", factura:x.factura || "", baja:null, hist:{}, docs:[] }); n++;
+    }
+    save(); toast(`✓ ${n} dados de alta. Revisa el porcentaje de cada uno.`);
+  }
+});
+document.addEventListener("change", e => {
+  if (e.target.id === "impAmFile"){ const f = e.target.files[0]; e.target.value = ""; if (f) importarHoja(f); }
+  if (e.target.id === "amYear"){ setYear(+e.target.value); render(); }
+  if (e.target.id === "amInm"){ curInm = e.target.value; render(); }
+});
 
 // =====================================================================
 // Fase 4 · Bandeja de documentos: extractos, recibos y facturas se leen aquí, en el aparato
@@ -1807,7 +2060,7 @@ const GD = (() => {
 GD.mount();
 render();
 const startTab = location.hash.slice(1);
-if (["resumen","inmuebles","contratos","cuentas","bandeja","titulares","datos"].includes(startTab)) go(startTab);
+if (["resumen","inmuebles","contratos","cuentas","amort","bandeja","titulares","datos"].includes(startTab)) go(startTab);
 // App instalable (en GitHub Pages)
 let deferredInstall = null;
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferredInstall = e; $("installBtn").hidden = false; });
