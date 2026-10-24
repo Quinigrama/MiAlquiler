@@ -337,7 +337,7 @@ function load(){
 function normalize(d){
   d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
-  for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; }
+  for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; c.cartas ||= []; c.prorrogas ||= []; }
   d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.archivo ||= []; d.bienes ||= [];
   for (const m of d.inmuebles) if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true };
   for (const x of d.movs) x.docs ||= [];
@@ -375,7 +375,8 @@ async function sha(blob){ try { const b = await crypto.subtle.digest("SHA-256", 
 // =====================================================================
 function finContrato(c){
   if (c.fin) return c.fin;
-  if (c.inicio && +c.duracion > 0) return addYears(c.inicio, +c.duracion);
+  // 5 años desde el 1/11/2021 terminan el 31/10/2026
+  if (c.inicio && +c.duracion > 0){ const f = toDate(addYears(c.inicio, +c.duracion)); return iso(new Date(f.getFullYear(), f.getMonth(), f.getDate() - 1)); }
   return null;
 }
 // Aniversarios de actualización: el día y mes de «actRef» (o del inicio del contrato)
@@ -468,7 +469,7 @@ function renderResumen(){
   if (db.seed) h += `<div class="panel"><div class="panel-head"><h2>👋 Primeros pasos</h2></div><p class="note">He dejado preparados vuestros tres pisos, los dos titulares y un contrato por piso, con lo que sé. Entra en cada uno y completa los datos: la referencia catastral y el valor catastral están en el recibo del IBI; las fechas, la renta y la fianza, en el contrato.</p></div>`;
   h += `<div class="panel"><div class="panel-head"><h2>🔔 Avisos</h2>${ine}</div>`;
   const urgentes = av.map((a, i) => ({ ...a, i })).filter(a => a.nivel !== "info"), datos = av.map((a, i) => ({ ...a, i })).filter(a => a.nivel === "info");
-  h += urgentes.length ? `<div class="alerts">${urgentes.map(a => `<div class="alert ${a.nivel}"><span class="ic" aria-hidden="true">${a.ic}</span><div><b>${esc(a.titulo)}</b>${esc(a.texto)}</div><button type="button" data-av="${a.i}">Abrir</button></div>`).join("")}</div>` : `<p class="note">Nada urgente ✅</p>`;
+  h += urgentes.length ? `<div class="alerts">${urgentes.map(a => `<div class="alert ${a.nivel}"><span class="ic" aria-hidden="true">${a.ic}</span><div><b>${esc(a.titulo)}</b>${esc(a.texto)}</div><div style="display:grid;gap:6px">${a.go?.ine && a.go.ct ? `<button type="button" data-carta="${a.go.ct}">✉️ Carta</button>` : a.ic === "📅" && a.go?.ct ? `<button type="button" data-renov="${a.go.ct}">🔁 Renovar</button>` : ""}<button type="button" data-av="${a.i}">Abrir</button></div></div>`).join("")}</div>` : `<p class="note">Nada urgente ✅</p>`;
   if (datos.length){
     const grupos = new Map();
     for (const a of datos){ const k = a.titulo.split(": ")[0]; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(a); }
@@ -495,7 +496,7 @@ function renderResumen(){
     <li><span class="chip ok">Fase 2</span><span>Amortizaciones: inmueble al 3 %, muebles al 10 % con prorrateo y bajas, e importar tu hoja de Google. <b>Ya está.</b></span></li>
     <li><span class="chip ok">Fase 3</span><span>Ingresos y gastos por casillas de la Renta, con límite de intereses y reparaciones y prorrateo por días. <b>Ya está.</b></span></li>
     <li><span class="chip ok">Fase 4</span><span>Bandeja de documentos: extractos, recibos y facturas, con detección del piso, de la categoría y de duplicados. <b>Ya está.</b></span></li>
-    <li><span class="chip">Fase 5</span><span>Carta de subida para el inquilino y renovaciones.</span></li>
+    <li><span class="chip ok">Fase 5</span><span>Carta de subida para el inquilino, renovaciones y avisos al calendario. <b>Ya está.</b></span></li>
     <li><span class="chip">Fase 6</span><span>Resumen fiscal de la declaración conjunta y exportación a Mi Renta y a Google Sheets.</span></li>
   </ul></div>`;
   $("v-resumen").innerHTML = h;
@@ -537,9 +538,9 @@ function renderContratos(){
         <dt>Fianza</dt><dd class="num">${c.fianza.importe ? eur(c.fianza.importe) : "—"}${c.fianza.fecha ? ' <span class="chip ok">Depositada</span>' : ""}</dd>
         <dt>Documentos</dt><dd>${docs ? `📎 ${docs}` : "—"}</dd>
       </dl>
-      <div class="toolbar"><button type="button" data-edit-ct="${c.id}">Editar</button></div></div>`;
+      <div class="toolbar"><button type="button" data-edit-ct="${c.id}">Editar</button>${c.estado === "vigente" && c.indice !== "ninguno" ? `<button type="button" data-carta="${c.id}">✉️ Carta de subida</button>` : ""}${c.estado === "vigente" ? `<button type="button" data-renov="${c.id}">🔁 Renovar</button>` : ""}</div></div>`;
   };
-  let h = `<div class="panel-head"><h2>📄 Contratos e inquilinos</h2><button type="button" class="primary" id="addCt"${db.inmuebles.length ? "" : " disabled"}>＋ Nuevo contrato</button></div>`;
+  let h = `<div class="panel-head"><h2>📄 Contratos e inquilinos</h2><div class="toolbar"><button type="button" id="icsBtn">📅 Al calendario</button><button type="button" class="primary" id="addCt"${db.inmuebles.length ? "" : " disabled"}>＋ Nuevo contrato</button></div></div>`;
   h += vig.length ? `<div class="cards">${vig.map(card).join("")}</div>` : `<div class="empty">No hay contratos vigentes.</div>`;
   if (fin.length) h += `<details class="panel"><summary><h3 style="display:inline">Contratos finalizados (${fin.length})</h3></summary><div class="cards" style="margin-top:12px">${fin.map(card).join("")}</div></details>`;
   $("v-contratos").innerHTML = h;
@@ -721,6 +722,8 @@ function editCt(id, inmPre){
       </div>
     </details>
     <div><h3 style="margin-bottom:8px">Historial de la renta</h3><div id="histBox">${histRows()}</div></div>
+    ${(c.cartas || []).length ? `<details><summary style="cursor:pointer;font-weight:600">✉️ Cartas enviadas (${c.cartas.length})</summary><div style="display:grid;gap:8px;margin-top:8px">${c.cartas.slice().reverse().map(k => `<div><div class="sub">${fdate(k.fecha)}</div><textarea readonly style="min-height:120px;font:13px/1.45 var(--f-body)">${esc(k.texto)}</textarea></div>`).join("")}</div></details>` : ""}
+    ${(c.prorrogas || []).length ? `<p class="note">Prórrogas: ${c.prorrogas.map(x => `hasta el ${fdate(x.hasta)}`).join(" · ")}.</p>` : ""}
     </fieldset>
     <fieldset><legend>Fianza</legend><div class="fields">
       ${fMoney("f-imp", "Importe (€)", c.fianza.importe, "En vivienda, una mensualidad.")}
@@ -1341,6 +1344,181 @@ document.addEventListener("change", e => {
   if (e.target.id === "impAmFile"){ const f = e.target.files[0]; e.target.value = ""; if (f) importarHoja(f); }
   if (e.target.id === "amYear"){ setYear(+e.target.value); render(); }
   if (e.target.id === "amInm"){ curInm = e.target.value; render(); }
+});
+
+// =====================================================================
+// Fase 5 · Carta de subida de la renta y renovaciones
+// =====================================================================
+const JSPDF = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+async function needJsPdf(){ if (!window.jspdf?.jsPDF) await loadScript(JSPDF); }
+const nombresInq = c => { const n = c.inquilinos.filter(q => q.nombre).map(q => q.nombre); return n.length > 1 ? n.slice(0, -1).join(", ") + " y " + n.at(-1) : n[0] || ""; };
+const primerDiaMesSiguiente = s => { const d = toDate(s); return iso(new Date(d.getFullYear(), d.getMonth() + 1, 1)); };
+// Desde cuándo vale la nueva renta: el aniversario, o el mes siguiente a la carta si se entrega tarde
+function fechaEfecto(c, fechaCarta){
+  const a = actualizaciones(c), aniv = a ? (a.pendiente ? a.last : a.next) : null;
+  if (!aniv) return primerDiaMesSiguiente(fechaCarta);
+  return fechaCarta <= aniv ? aniv : primerDiaMesSiguiente(fechaCarta);
+}
+function textoCarta(c, o){
+  const m = iById(c.inmueble), tit = m ? m.tit.map(x => tById(x.t)).filter(Boolean) : [];
+  const dir = m ? [m.direccion, [m.cp, m.municipio].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";
+  const inq = nombresInq(c), plur = c.inquilinos.filter(q => q.nombre).length > 1, yo = tit.length > 1;
+  const idx = { IPC:"Índice de Precios de Consumo (IPC)", IRAV:"Índice de Referencia para la Actualización de Arrendamientos de Vivienda (IRAV)", fijo:"porcentaje fijo pactado en el contrato" }[c.indice] || "índice pactado";
+  const sube = (o.pct ?? 0) >= 0;
+  return `${o.lugar ? o.lugar + ", a " : ""}${fdateLong(o.fecha)}
+
+${plur ? "Estimados" : "Estimado/a"} ${inq || "arrendatario/a"}:
+
+${yo ? "Como arrendadores" : "Como arrendador/a"} de la vivienda situada en ${dir || "[dirección]"}, que ${plur ? "ocupáis" : "ocupas"} con el contrato de arrendamiento${c.inicio ? ` de ${fdateLong(c.inicio)}` : ""}, ${yo ? "os comunicamos" : "te comunico"} que, según lo pactado sobre la actualización anual de la renta, corresponde ${sube ? "actualizarla" : "ajustarla"} con la variación del ${idx}${c.indice === "fijo" ? "" : " publicada por el Instituto Nacional de Estadística"}.
+
+· Índice aplicado: ${c.indice === "fijo" ? "porcentaje fijo del contrato" : c.indice}${o.periodo ? ` (${o.periodo})` : ""}
+· Variación: ${fmt(o.pct ?? 0, 2)} %
+· Renta actual: ${eur(o.actual)} al mes
+· Nueva renta: ${eur(o.nueva)} al mes
+· Desde: ${fdateLong(o.efecto)}
+
+${c.indice === "fijo" ? "" : `El cálculo puede comprobarse en la web del INE (www.ine.es/calcula)${plur ? "; si lo queréis" : "; si lo quieres"}, ${yo ? "os facilitaremos" : "te facilitaré"} la certificación correspondiente.
+
+`}${o.cuenta ? `El pago se seguirá haciendo en la cuenta ${o.cuenta}.
+
+` : ""}Un saludo,
+
+${tit.map(t => t.nombre + (t.nif ? ` · NIF ${t.nif}` : "")).join("\n") || "[arrendador/a]"}`;
+}
+function editCarta(ctId){
+  const c = cById(ctId); if (!c) return;
+  const m = iById(c.inmueble), hoy = todayIso();
+  const st = { fecha:hoy, lugar:m?.municipio || "", periodo:"", pct:c.indice === "fijo" ? c.fijo : null, actual:c.renta || 0, nueva:null, efecto:fechaEfecto(c, hoy), cuenta:c.cuenta || "", editado:false };
+  const tel = c.inquilinos.find(q => q.tel)?.tel || "", mail = c.inquilinos.filter(q => q.email).map(q => q.email).join(",");
+  openDlg(`Carta de subida · ${m?.alias || ""}`, `
+    <div class="calc">Calcula el porcentaje en la <a href="https://www.ine.es/calcula/" target="_blank" rel="noopener">calculadora del INE</a> (${esc(label(INDICES, c.indice))}) y escríbelo aquí. La carta se rellena sola.</div>
+    <div class="fields">
+      ${fMoney("k-pct", "Variación del índice (%)", st.pct)}
+      ${fText("k-per", "Periodo del índice", "", 'placeholder="Ej.: agosto 2025 – agosto 2026"')}
+      ${fMoney("k-act", "Renta actual (€/mes)", st.actual)}
+      ${fMoney("k-new", "Nueva renta (€/mes)", null)}
+      ${fDate("k-fecha", "Fecha de la carta", st.fecha)}
+      ${fDate("k-efe", "Nueva renta desde", st.efecto, "Si la carta se entrega después del aniversario, la nueva renta vale desde el mes siguiente a la entrega.")}
+      ${fText("k-lug", "Lugar", st.lugar)}
+      ${fText("k-cta", "Cuenta para el pago (opcional)", st.cuenta, 'placeholder="ES00 0000 …" autocapitalize="characters"')}
+    </div>
+    <label class="field">Carta (puedes retocarla)<textarea id="k-txt" style="min-height:340px;font:14px/1.5 var(--f-body)"></textarea></label>
+    <div class="toolbar">
+      <button type="button" id="k-copy">📋 Copiar</button>
+      ${navigator.share ? `<button type="button" id="k-share">📤 Compartir</button>` : ""}
+      ${tel ? `<button type="button" id="k-wa">💬 WhatsApp</button>` : ""}
+      ${mail ? `<button type="button" id="k-mail">✉️ Correo</button>` : ""}
+      <button type="button" id="k-pdf">📄 PDF</button>
+    </div>
+    <p class="note">«Guardar» apunta la subida en el historial del contrato y guarda una copia de la carta.</p>`, () => {
+    if (!st.nueva || !st.efecto){ toast("Falta la nueva renta o la fecha."); return false; }
+    const k = cById(ctId);
+    k.historial.push({ desde:st.efecto, renta:st.nueva, antes:st.actual || null, pct:st.pct, nota:`${k.indice}${st.periodo ? " " + st.periodo : ""}: ${fmt(st.pct ?? 0)} % (carta del ${fdate(st.fecha)})` });
+    k.historial.sort((a, b) => a.desde.localeCompare(b.desde));
+    k.renta = st.nueva; k.ultAct = st.efecto; if (st.cuenta) k.cuenta = st.cuenta;
+    (k.cartas ||= []).push({ fecha:st.fecha, tipo:"subida", texto:$("k-txt").value });
+    toast("✓ Subida guardada en el contrato");
+  });
+  $("dlgSave").textContent = "Guardar subida";
+  $("dlg").addEventListener("close", () => $("dlgSave").textContent = "Guardar", { once:true });
+  const pinta = () => { if (!st.editado) $("k-txt").value = textoCarta(c, st); };
+  const lee = id => {
+    st.pct = money("k-pct"); st.periodo = val("k-per"); st.actual = money("k-act") || 0; st.fecha = val("k-fecha") || hoy; st.lugar = val("k-lug"); st.cuenta = val("k-cta");
+    if (id === "k-fecha") $("k-efe").value = fechaEfecto(c, st.fecha);
+    st.efecto = val("k-efe");
+    if (id === "k-new"){ st.nueva = money("k-new"); if (st.nueva && st.actual) $("k-pct").value = fmt((st.nueva / st.actual - 1) * 100), st.pct = money("k-pct"); }
+    else if (st.pct != null && st.actual){ st.nueva = Math.round(st.actual * (1 + st.pct / 100) * 100) / 100; $("k-new").value = fmt(st.nueva); }
+  };
+  $("dlgBody").oninput = e => { if (e.target.id === "k-txt"){ st.editado = true; return; } lee(e.target.id); pinta(); };
+  $("dlgBody").onchange = $("dlgBody").oninput;
+  lee(); pinta();
+  const txt = () => $("k-txt").value;
+  $("k-copy").onclick = async () => { try { await navigator.clipboard.writeText(txt()); toast("✓ Carta copiada"); } catch(e){ $("k-txt").select(); toast("Selecciona el texto y cópialo."); } };
+  if ($("k-share")) $("k-share").onclick = () => navigator.share({ title:"Actualización de la renta", text:txt() }).catch(() => {});
+  if ($("k-wa")) $("k-wa").onclick = () => { const n = tel.replace(/\D/g, ""); window.open(`https://wa.me/${n.length === 9 ? "34" + n : n}?text=${encodeURIComponent(txt())}`, "_blank", "noopener"); };
+  if ($("k-mail")) $("k-mail").onclick = () => { location.href = `mailto:${mail}?subject=${encodeURIComponent("Actualización de la renta del alquiler")}&body=${encodeURIComponent(txt())}`; };
+  $("k-pdf").onclick = async () => {
+    if (inFrame){ toast("Aquí dentro no se pueden descargar archivos: abre la app en su web."); return; }
+    try {
+      await needJsPdf();
+      const doc = new jspdf.jsPDF({ unit:"mm", format:"a4" }); doc.setFont("helvetica", "normal"); doc.setFontSize(11);
+      const lines = doc.splitTextToSize(txt().replace(/[^\x00-\xFF€]/g, "-"), 170); let y = 25;
+      for (const l of lines){ if (y > 280){ doc.addPage(); y = 25; } doc.text(l, 20, y); y += 5.6; }
+      doc.save(`carta-subida-${norm(m?.alias || "alquiler").replace(/ /g, "-")}-${st.fecha}.pdf`);
+    } catch(e){ toast("No he podido crear el PDF: " + e.message); }
+  };
+}
+
+// ---------- Renovar, prorrogar o terminar un contrato ----------
+function editRenovar(ctId){
+  const c = cById(ctId); if (!c) return;
+  const m = iById(c.inmueble), fin = finContrato(c) || todayIso();
+  openDlg(`Renovación · ${m?.alias || ""}`, `
+    <div class="calc">Fin actual: <b>${finContrato(c) ? fdateLong(finContrato(c)) : "sin fecha"}</b>${c.inicio ? ` · contrato desde el ${fdate(c.inicio)}` : ""}.</div>
+    <label class="field">¿Qué ha pasado?<select id="r-op">
+      <option value="prorroga">Sigue el mismo contrato (prórroga)</option>
+      <option value="nuevo">Firmamos un contrato nuevo con el mismo inquilino</option>
+      <option value="fin">El inquilino se va</option>
+    </select></label>
+    <div id="r-p" class="fields">${fDate("r-hasta", "Prorrogado hasta", addYears(fin, 1))}</div>
+    <div id="r-n" class="fields" hidden>
+      ${fDate("r-ini", "Inicio del nuevo contrato", iso(new Date(toDate(fin).getTime() + DAY)))}
+      <label class="field">Duración (años)<input type="text" inputmode="numeric" id="r-dur" value="5"></label>
+      ${fMoney("r-renta", "Renta del nuevo contrato (€/mes)", c.renta)}
+      <div class="wide alert media"><span class="ic">⚠️</span><div><b>Ojo con lo fiscal</b>Un contrato firmado desde el 26/05/2023 ya no tiene la reducción del 60 %: el caso general es el 50 %. Y sus subidas anuales van con el IRAV. Lo pongo así en el contrato nuevo; cámbialo si os corresponde otro caso.</div><span></span></div>
+    </div>
+    <div id="r-f" class="fields" hidden>
+      ${fDate("r-sal", "Fecha de salida", fin)}
+      ${fMoney("r-dev", "Fianza devuelta (€)", c.fianza?.importe)}
+      ${fDate("r-devf", "Fecha de devolución", "")}
+      ${fText("r-desc", "Descuentos de la fianza (motivo)", "", 'placeholder="Ej.: pintura, recibo de luz pendiente…"')}
+      <label class="check wide"><input type="checkbox" id="r-vacio" checked> El piso queda vacío (a disposición)</label>
+      <p class="note wide">Recuerda pedir la devolución del depósito de la fianza al organismo donde se depositó.</p>
+    </div>`, () => {
+    const op = val("r-op"), k = cById(ctId);
+    if (op === "prorroga"){
+      const h = val("r-hasta"); if (!h) return false;
+      (k.prorrogas ||= []).push({ fecha:todayIso(), desde:finContrato(k), hasta:h }); k.fin = h;
+      toast(`✓ Prorrogado hasta el ${fdate(h)}`);
+    } else if (op === "nuevo"){
+      const ini = val("r-ini"); if (!ini) return false;
+      const finViejo = iso(new Date(toDate(ini).getTime() - DAY));
+      k.estado = "finalizado"; k.fin = finViejo;
+      const n = { ...JSON.parse(JSON.stringify(k)), id:"c-" + uid(), estado:"vigente", firma:ini, inicio:ini, duracion:Math.max(1, parseInt(val("r-dur")) || 5), fin:"", renta:money("r-renta") || k.renta, actRef:"", ultAct:"", historial:[], docs:[], cartas:[], prorrogas:[], regimen:"ley23", red:"0.5", indice:k.indice === "IPC" ? "IRAV" : k.indice, notas:`Renovación del contrato de ${k.inicio ? fdate(k.inicio) : "antes"}.` };
+      db.contratos.push(n);
+      toast("✓ Contrato nuevo creado. Adjunta el PDF firmado.");
+    } else {
+      const sal = val("r-sal"); if (!sal) return false;
+      k.estado = "finalizado"; k.fin = sal;
+      k.fianza = { ...(k.fianza || {}), devuelta:money("r-dev"), devueltaFecha:val("r-devf"), descuento:val("r-desc") };
+      if ($("r-vacio").checked && m && !db.contratos.some(o => o.inmueble === m.id && o.estado === "vigente")) m.situacion = "disposicion";
+      toast("✓ Contrato terminado");
+    }
+  });
+  $("dlgBody").onchange = e => { if (e.target.id === "r-op"){ const v = e.target.value; $("r-p").hidden = v !== "prorroga"; $("r-n").hidden = v !== "nuevo"; $("r-f").hidden = v !== "fin"; } };
+}
+
+// ---------- Avisos al calendario del móvil (.ics) ----------
+function descargarIcs(){
+  if (inFrame){ toast("Aquí dentro no se pueden descargar archivos: abre la app en su web."); return; }
+  const ev = [], d = s => s.replace(/-/g, ""), stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+  const add = (fecha, titulo, desc, dias) => ev.push(["BEGIN:VEVENT", `UID:${d(fecha)}-${norm(titulo).replace(/ /g, "")}@mialquiler`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${d(fecha)}`, `DTEND;VALUE=DATE:${d(iso(new Date(toDate(fecha).getTime() + DAY)))}`, `SUMMARY:${titulo}`, `DESCRIPTION:${desc}`, "BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${titulo}`, `TRIGGER:-P${dias}D`, "END:VALARM", "END:VEVENT"].join("\r\n"));
+  for (const c of db.contratos.filter(c => c.estado === "vigente")){
+    const m = iById(c.inmueble), name = m?.alias || "Alquiler";
+    const a = actualizaciones(c);
+    if (a) for (let i = 0; i < 3; i++) add(addYears(a.next, i), `📈 Subida ${c.indice} · ${name}`, "Calcula la subida en www.ine.es/calcula y manda la carta desde Mi Alquiler.", 20);
+    const f = finContrato(c); if (f && f >= todayIso()) add(f, `📅 Fin del contrato · ${name}`, "Revisa si se prorroga, se renueva o termina. Ojo con los plazos de preaviso.", 120);
+  }
+  if (!ev.length){ toast("No hay fechas que añadir: completa los contratos."); return; }
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Mi Alquiler//ES", "CALSCALE:GREGORIAN", ...ev, "END:VCALENDAR"].join("\r\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([ics], { type:"text/calendar" })); a.download = "mi-alquiler-avisos.ics";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`✓ ${ev.length} avisos. Ábrelo para añadirlos a tu calendario.`);
+}
+document.addEventListener("click", e => {
+  const k = e.target.closest("[data-carta]"); if (k){ if ($("dlg").open) $("dlg").close(); return editCarta(k.dataset.carta); }
+  const r = e.target.closest("[data-renov]"); if (r){ if ($("dlg").open) $("dlg").close(); return editRenovar(r.dataset.renov); }
+  if (e.target.closest("#icsBtn")) return descargarIcs();
 });
 
 // =====================================================================
