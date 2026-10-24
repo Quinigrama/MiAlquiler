@@ -165,6 +165,8 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
   nav.tabs,header .toolbar,#installHelp,.noprint,#driveChip,.toast{display:none!important}
   .wrap{padding:0;max-width:none} .panel,.card{break-inside:avoid;border-color:#bbb}
 }
+.userpick{display:inline-flex;align-items:center;gap:4px;font-size:15px}
+.userpick select{width:auto;max-width:46vw;padding:5px 8px;font-size:14px;border-radius:999px}
 .toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:10px;font-size:14.5px;z-index:50;max-width:calc(100vw - 32px);box-shadow:0 8px 24px rgba(0,0,0,.25)}
 </style>
 </head>
@@ -173,7 +175,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
   <header>
     <div class="toprow">
       <span class="eyebrow">Gestoría familiar · alquileres</span>
-      <button id="driveChip" type="button" class="drivechip" hidden></button>
+      <div class="toolbar"><label class="userpick" title="Usuario">👤 <select id="userSel" aria-label="Usuario"></select></label><button id="driveChip" type="button" class="drivechip" hidden></button></div>
     </div>
     <h1>Mi Alquiler</h1>
     <p class="lede" id="ledeTxt">Los pisos, los inquilinos y los contratos, con los datos tal y como los pide la declaración de la renta. Todo se guarda en este aparato y, si quieres, en tu Google Drive.</p>
@@ -203,6 +205,18 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <section class="view" id="v-bandeja" role="tabpanel" hidden></section>
     <section class="view" id="v-titulares" role="tabpanel" hidden></section>
     <section class="view" id="v-datos" role="tabpanel" hidden>
+      <div class="panel">
+        <div class="panel-head"><h2>👥 Usuarios</h2></div>
+        <div style="display:grid;gap:10px">
+          <p class="note">Cada usuario tiene sus propios titulares, inmuebles, contratos y cuentas: por ejemplo, los pisos de tus padres y los tuyos por separado. Se cambia arriba, en 👤.</p>
+          <div class="fields">
+            <label class="field">Nombre del usuario actual<input type="text" id="uName"></label>
+            <label class="field">Nuevo usuario<input type="text" id="uNew" placeholder="Ej.: Rober"></label>
+          </div>
+          <div class="toolbar"><button type="button" id="uRen">Cambiar nombre</button><button type="button" class="primary" id="uAdd">＋ Crear usuario</button><button type="button" class="danger" id="uDel">Borrar este usuario</button></div>
+          <p class="note st" id="uMsg"></p>
+        </div>
+      </div>
       <div class="panel" id="driveDet">
         <div class="panel-head"><h2>☁️ Google Drive</h2></div>
         <div id="driveBox" style="display:grid;gap:10px"></div>
@@ -342,10 +356,33 @@ function seed(){
     ]
   };
 }
-function load(){
-  try { const d = JSON.parse(localStorage.getItem(KEY)); if (d && d.app === "miAlquiler") return normalize(d); } catch(e){}
-  return seed();
+// ---------- Usuarios: cada uno con sus propios inmuebles, contratos y cuentas (como en Mi Renta y Mi Voz) ----------
+const UKEY = "miAlquiler:users";
+const dataKey = id => KEY + ":" + id;
+function loadUsers(){
+  try { const u = JSON.parse(localStorage.getItem(UKEY)); if (u && Array.isArray(u.list) && u.list.length) return u; } catch(e){}
+  // Primera vez: los datos que ya había pasan al primer usuario
+  const u = { list:[{ id:"u1", name:"Mis padres" }], cur:"u1" };
+  try { const old = localStorage.getItem(KEY); if (old){ localStorage.setItem(dataKey("u1"), old); localStorage.removeItem(KEY); } localStorage.setItem(UKEY, JSON.stringify(u)); } catch(e){}
+  return u;
 }
+let users = loadUsers();
+const saveUsers = () => { try { localStorage.setItem(UKEY, JSON.stringify(users)); } catch(e){} };
+const curUser = () => users.list.find(u => u.id === users.cur) || users.list[0];
+function emptyData(name){
+  const t = "t-" + uid();
+  return { app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{}, reglas:[], archivo:[], bienes:[],
+    titulares:[{ id:t, nombre:name || "Titular", nif:"", rel:"" }], declaracion:{ tipo:"individual", miembros:[t] }, inmuebles:[], contratos:[] };
+}
+function loadUserData(id){
+  try { const d = JSON.parse(localStorage.getItem(dataKey(id))); if (d && d.app === "miAlquiler") return normalize(d); } catch(e){}
+  return id === users.list[0].id && users.list.length === 1 ? seed() : emptyData(users.list.find(u => u.id === id)?.name);
+}
+function load(){ return loadUserData(users.cur); }
+// Datos de todos los usuarios (para Drive, la copia y Mi Renta)
+function todosLosDatos(){ return users.list.map(u => ({ id:u.id, name:u.name, data:u.id === users.cur ? db : loadUserData(u.id) })); }
+// Ejecuta algo con los datos de otro usuario (las funciones de cálculo leen «db»)
+function conDatos(data, fn){ const keep = db; db = data; try { return fn(); } finally { db = keep; } }
 function normalize(d){
   d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
@@ -356,7 +393,14 @@ function normalize(d){
   return d;
 }
 let db = load();
-function persist(){ try { localStorage.setItem(KEY, JSON.stringify(db)); } catch(e){ toast("⚠️ No se ha podido guardar en este aparato."); } }
+function persist(){ try { localStorage.setItem(dataKey(users.cur), JSON.stringify(db)); } catch(e){ toast("⚠️ No se ha podido guardar en este aparato."); } }
+function switchUser(id){
+  if (!users.list.some(u => u.id === id)) return;
+  persist(); users.cur = id; saveUsers(); db = load();
+  bandeja = []; bandejaMsg = ""; curInm = "todos";
+  render(); GD.render(); try { publicarParaMiRenta(); } catch(e){}
+  toast(`👤 ${curUser().name}`);
+}
 function save(){ db.seed = false; db.updated = Date.now(); persist(); GD.markChanged(); render(); try { publicarParaMiRenta(); } catch(e){} }
 
 const tById = id => db.titulares.find(t => t.id === id);
@@ -451,6 +495,7 @@ function avisos(){
 // =====================================================================
 // Pintado
 // =====================================================================
+const dirTxt = m => m ? [m.direccion, [m.cp, m.municipio].filter(Boolean).join(" ")].filter(Boolean).join(", ") : "";
 const titChips = m => m.tit.map(x => `<span class="chip acc">${esc(tById(x.t)?.nombre || "?")} ${fmt(x.pct, 0)} %</span>`).join("");
 const situChip = m => { const k = { arrendado:"ok", disposicion:"warn", habitual:"info" }[m.situacion] || ""; return `<span class="chip ${k}">${esc(label(SITUACIONES, m.situacion))}</span>`; };
 function inquilinosTxt(c){
@@ -500,7 +545,7 @@ function renderResumen(){
   h += `</div><div class="cards">`;
   for (const m of db.inmuebles){
     const c = vigente(m), a = c && actualizaciones(c), fin = c && finContrato(c);
-    h += `<div class="card"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${esc([m.municipio, m.provincia && m.provincia !== m.municipio ? m.provincia : ""].filter(Boolean).join(", ") || "Sin municipio")}</div></div>${situChip(m)}</div>
+    h += `<div class="card"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${esc(dirTxt(m) || "Sin dirección")}</div></div>${situChip(m)}</div>
       <div class="chips">${titChips(m)}</div>
       <dl class="kv">
         <dt>Inquilinos</dt><dd>${c ? esc(inquilinosTxt(c)) : "—"}</dd>
@@ -602,7 +647,13 @@ function renderTitulares(){
   $("v-titulares").innerHTML = h;
 }
 
-function render(){ renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderAmort(); renderRenta(); renderBandeja(); renderTitulares(); }
+function renderUsers(){
+  const sel = $("userSel"); if (!sel) return;
+  sel.innerHTML = users.list.map(u => `<option value="${u.id}"${u.id === users.cur ? " selected" : ""}>${esc(u.name)}</option>`).join("");
+  if ($("uName") && document.activeElement !== $("uName")) $("uName").value = curUser().name;
+  if ($("uDel")) $("uDel").disabled = users.list.length < 2;
+}
+function render(){ renderUsers(); renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderAmort(); renderRenta(); renderBandeja(); renderTitulares(); }
 
 // =====================================================================
 // Navegación
@@ -1064,7 +1115,7 @@ function renderCuentas(){
   h += `<div class="cards">` + inms.map(m => {
     const r = cuentas(m, curYear); tot.ing += r.ingresos; tot.ded += r.limDed + r.otros + r.amI + r.amM; tot.neto += r.netoRed;
     const filas = [...r.grupos.entries()].filter(([, v]) => v > 0.004).map(([g, v]) => `<dt>${esc(g)}</dt><dd class="num">${eur(v)}</dd>`).join("");
-    return `<div class="card"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${r.dias} de ${r.tot} días alquilado${r.supuesto ? " (sin fecha de inicio: cuento el año entero)" : ""}</div></div><span class="chip ${r.n ? "acc" : ""}">${r.n} ${plural(r.n, "apunte", "apuntes")}</span></div>
+    return `<div class="card"><div class="card-head"><div><h3>${esc(m.alias)}</h3><div class="sub">${esc(dirTxt(m))}</div><div class="sub">${r.dias} de ${r.tot} días alquilado${r.supuesto ? " (sin fecha de inicio: cuento el año entero)" : ""}</div></div><span class="chip ${r.n ? "acc" : ""}">${r.n} ${plural(r.n, "apunte", "apuntes")}</span></div>
       <dl class="kv">
         <dt><b>Ingresos íntegros</b></dt><dd class="num"><b>${eur(r.ingresos)}</b></dd>
         ${r.limit || r.pendAnt ? `<dt>Intereses + reparación${r.pendAnt ? " (con lo pendiente de años anteriores)" : ""}</dt><dd class="num">${eur(r.limDed)}</dd>` : ""}
@@ -1289,7 +1340,7 @@ function renderAmort(){
     const filas = bs.map(b => ({ b, e:estadoBien(b, curYear) })).filter(({ b, e }) => !(e.est === "baja" && bajaYear(b) < curYear - 1) && !(e.est === "amortizado" && e.este === 0 && e.acum === 0 && altaYear(b) > curYear))
       .sort((p, q) => (p.b.alta || "").localeCompare(q.b.alta || ""));
     const chip = e => e.est === "baja" ? `<span class="chip">Baja</span>` : e.est === "ultimo" ? `<span class="chip warn">Último año</span>` : e.est === "amortizado" ? `<span class="chip ok">Amortizado</span>` : "";
-    h += `<div class="panel"><div class="panel-head"><h2>${esc(m.alias)}</h2><span class="chip acc">${eur(ai.v + tm)} en ${curYear}</span></div>
+    h += `<div class="panel"><div class="panel-head"><div><h2>${esc(m.alias)}</h2><div class="sub">${esc(dirTxt(m))}</div></div><span class="chip acc">${eur(ai.v + tm)} en ${curYear}</span></div>
       <div class="card" style="background:var(--bg)"><div class="card-head"><h3>🏠 Inmueble (3 %)</h3><button type="button" class="ghost" data-am-inm="${m.id}">✎ Ajustar</button></div>
         <dl class="kv"><dt>Cómo se calcula</dt><dd>${esc(ai.fuente)}</dd>${ai.anual ? `<dt>Al año completo</dt><dd class="num">${eur(ai.anual)}</dd>` : ""}${ai.dias != null ? `<dt>Días alquilado</dt><dd class="num">${ai.dias} de ${ai.tot}</dd>` : ""}<dt><b>${curYear}</b></dt><dd class="num"><b>${eur(ai.v)}</b></dd></dl>
         ${(() => { const c = amortInm(m); return ai.fuente === "Cifra fija" && c && Math.abs(c.anual - ai.anual) > Math.max(5, ai.anual * 0.05) ? `<p class="note" style="color:var(--warn)">⚠️ Con los datos de la ficha (compra y catastro${c.partes > 1 ? ", con sus accesorios" : ""}) saldría <b>${eur(c.anual)}</b> al año, ${c.anual > ai.anual ? "más" : "menos"} que la cifra fija. Revísalo con «✎ Ajustar».</p>` : ""; })()}
@@ -1654,7 +1705,8 @@ function paraMiRenta(){
   }
   return { app:"miAlquiler-miRenta", v:1, at:new Date().toISOString(), tipo:db.declaracion.tipo, years };
 }
-function publicarParaMiRenta(){ try { localStorage.setItem("miAlquiler:paraMiRenta", JSON.stringify(paraMiRenta())); } catch(e){} }
+function paraMiRentaTodos(){ return { app:"miAlquiler-miRenta", v:2, at:new Date().toISOString(), usuarios:todosLosDatos().filter(u => u.data && u.data.inmuebles.length).map(u => ({ id:u.id, nombre:u.name, ...conDatos(u.data, paraMiRenta) })) }; }
+function publicarParaMiRenta(){ try { localStorage.setItem("miAlquiler:paraMiRenta", JSON.stringify(paraMiRentaTodos())); } catch(e){} }
 
 function renderRenta(){
   const el = $("v-renta"); if (!el) return;
@@ -1800,7 +1852,7 @@ document.addEventListener("click", async e => {
   if (e.target.closest("#rtMiRenta")){ publicarParaMiRenta(); location.href = "../MiRenta/#inmuebles"; return; }
   if (e.target.closest("#rtCopy")){ try { await navigator.clipboard.writeText(textoResumen()); toast("✓ Resumen copiado"); } catch(err){ toast("No he podido copiar."); } return; }
   if (e.target.closest("#rtPrint")) return window.print();
-  if (e.target.closest("#rtFile")){ if (inFrame) return toast("Abre la app en su web para descargar."); bajar(new Blob([JSON.stringify(paraMiRenta())], { type:"application/json" }), `mi-alquiler-para-mi-renta-${todayIso()}.json`); return; }
+  if (e.target.closest("#rtFile")){ if (inFrame) return toast("Abre la app en su web para descargar."); bajar(new Blob([JSON.stringify(paraMiRentaTodos())], { type:"application/json" }), `mi-alquiler-para-mi-renta-${todayIso()}.json`); return; }
   const an = e.target.closest("[data-arr-next]");
   if (an){ const m = iById(an.dataset.arrNext), r = cuentas(m, curYear); db.arrastres ||= {}; db.arrastres[m.id] ||= {}; db.arrastres[m.id][curYear + 1] = Math.round(r.exceso * 100) / 100; save(); toast(`✓ ${eur(r.exceso)} apuntados para ${curYear + 1}`); return; }
   if (e.target.closest("#xlDown")){ if (inFrame) return toast("Abre la app en su web para descargar."); try { bajar(await libroExcel(), `mi-alquiler-${todayIso()}.xlsx`); } catch(err){ toast("No he podido crear el Excel: " + err.message); } return; }
@@ -2470,6 +2522,14 @@ async function importarFichasArchivo(f){
 document.addEventListener("click", e => { if (e.target.closest("#impFichas")) $("impFichasFile").click(); });
 document.addEventListener("change", e => { if (e.target.id === "impFichasFile"){ const f = e.target.files[0]; e.target.value = ""; if (f) importarFichasArchivo(f); } });
 
+// Sustituye todos los usuarios por los de una copia o de Drive
+function aplicarTodos(datos){
+  try { for (const u of users.list) localStorage.removeItem(dataKey(u.id)); } catch(e){}
+  users.list = datos.map(x => ({ id:x.id, name:x.name }));
+  for (const x of datos) try { localStorage.setItem(dataKey(x.id), JSON.stringify(normalize(x.data || emptyData(x.name)))); } catch(e){}
+  if (!users.list.some(u => u.id === users.cur)) users.cur = users.list[0].id;
+  saveUsers(); db = load();
+}
 // =====================================================================
 // Copia de seguridad
 // =====================================================================
@@ -2478,9 +2538,10 @@ const b64ToBlob = (s, type) => { const bin = atob(s), u = new Uint8Array(bin.len
 const inFrame = (() => { try { return window.self !== window.top; } catch(e){ return true; } })();
 $("bkDown").onclick = async () => {
   if (inFrame){ $("bkMsg").textContent = "Aquí dentro no se pueden descargar archivos: abre la app en su web."; return; }
-  const docs = [];
-  for (const { d } of allDocs()){ const b = await IDB.get(d.id).catch(() => null); if (b) docs.push({ id:d.id, type:d.type, b64:await blobToB64(b) }); }
-  const blob = new Blob([JSON.stringify({ app:"miAlquiler", v:1, at:new Date().toISOString(), data:db, docs })], { type:"application/json" });
+  persist();
+  const docs = [], todos = todosLosDatos();
+  for (const u of todos) for (const { d } of conDatos(u.data, allDocs)){ const b = await IDB.get(d.id).catch(() => null); if (b) docs.push({ id:d.id, type:d.type, b64:await blobToB64(b) }); }
+  const blob = new Blob([JSON.stringify({ app:"miAlquiler", v:2, at:new Date().toISOString(), users:users.list, datos:todos, docs })], { type:"application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `mi-alquiler-copia-${todayIso()}.json`;
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   $("bkMsg").textContent = "✓ Copia descargada. Guárdala en un sitio seguro: lleva datos personales de los inquilinos.";
@@ -2491,9 +2552,10 @@ $("bkFile").onchange = async () => {
   const f = $("bkFile").files[0]; $("bkFile").value = ""; if (!f) return;
   try {
     const d = JSON.parse(await f.text());
-    if (d.app !== "miAlquiler" || !d.data) throw 0;
+    if (d.app !== "miAlquiler" || !(d.data || d.datos)) throw 0;
     pendingBk = d;
-    $("bkInfo").innerHTML = `Copia del <b>${esc(new Date(d.at).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" }))}</b>: ${d.data.inmuebles.length} inmuebles, ${d.data.contratos.length} contratos, ${(d.data.movs || []).length} apuntes y ${(d.docs || []).length} documentos. <b>Sustituye lo que hay ahora en este aparato.</b>`;
+    const ds = d.datos ? d.datos.map(x => x.data) : [d.data], n = k => ds.reduce((a, x) => a + (x?.[k] || []).length, 0);
+    $("bkInfo").innerHTML = `Copia del <b>${esc(new Date(d.at).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" }))}</b>${d.datos ? ` con ${d.datos.length} ${plural(d.datos.length, "usuario", "usuarios")} (${d.datos.map(x => esc(x.name)).join(", ")})` : ""}: ${n("inmuebles")} inmuebles, ${n("contratos")} contratos, ${n("movs")} apuntes y ${(d.docs || []).length} documentos. <b>${d.datos ? "Sustituye lo que hay ahora en este aparato." : `Sustituye los datos de «${esc(curUser().name)}».`}</b>`;
     $("bkConfirm").hidden = false; $("bkMsg").textContent = "";
   } catch(e){ $("bkMsg").textContent = "Ese archivo no es una copia de Mi Alquiler."; }
 };
@@ -2501,13 +2563,16 @@ $("bkYes").onclick = async () => {
   if (!pendingBk) return;
   await IDB.clear().catch(() => {});
   for (const d of pendingBk.docs || []) await IDB.put(d.id, b64ToBlob(d.b64, d.type)).catch(() => {});
-  db = normalize(pendingBk.data); pendingBk = null; $("bkConfirm").hidden = true;
+  if (pendingBk.datos) aplicarTodos(pendingBk.datos);
+  else db = normalize(pendingBk.data);
+  pendingBk = null; $("bkConfirm").hidden = true;
   save(); $("bkMsg").textContent = "✓ Copia cargada.";
 };
 $("bkNo").onclick = () => { pendingBk = null; $("bkConfirm").hidden = true; $("bkMsg").textContent = "Cancelado."; };
 armDelete($("wipe"), async () => {
-  await IDB.clear().catch(() => {}); try { localStorage.removeItem(KEY); } catch(e){}
-  db = seed(); persist(); render(); toast("Datos borrados de este aparato. Lo que haya en Drive sigue allí.");
+  await IDB.clear().catch(() => {});
+  try { for (const u of users.list) localStorage.removeItem(dataKey(u.id)); localStorage.removeItem(UKEY); } catch(e){}
+  users = loadUsers(); db = seed(); persist(); render(); toast("Datos borrados de este aparato. Lo que haya en Drive sigue allí.");
   $("wipe").textContent = "Borrar todos los datos de este aparato"; delete $("wipe").dataset.armed;
 });
 
@@ -2591,17 +2656,17 @@ const GD = (() => {
   }
   async function whoAmI(){ try { const u = (await (await api(API + "/about?fields=user(emailAddress)")).json()).user; if (u?.emailAddress) LS.set(K.who, u.emailAddress); } catch(e){} }
 
-  const hasLocalData = () => !db.seed;
-  const dataBlob = () => new Blob([JSON.stringify({ app:"miAlquiler", v:1, at:new Date().toISOString(), data:db })], { type:"application/json" });
+  const hasLocalData = () => todosLosDatos().some(u => u.data && !u.data.seed);
+  const dataBlob = () => { persist(); return new Blob([JSON.stringify({ app:"miAlquiler", v:2, at:new Date().toISOString(), users:users.list, datos:todosLosDatos() })], { type:"application/json" }); };
   async function readRemote(rem){
     let d; try { d = await (await api(API + "/files/" + rem.id + "?alt=media")).json(); } catch(e){ if (e.code) throw e; d = null; }
-    if (!d || d.app !== "miAlquiler" || !d.data) throw fail("bad");
+    if (!d || d.app !== "miAlquiler" || !(d.data || d.datos)) throw fail("bad");
     return d;
   }
   async function takeRemote(rem){
     const d = await readRemote(rem);
     applying = true;
-    try { db = normalize(d.data); persist(); render(); } finally { applying = false; }
+    try { if (d.datos) aplicarTodos(d.datos); else { db = normalize(d.data); persist(); } render(); } finally { applying = false; }
     const now = Date.now(); LS.set(K.chg, now); setSt({ id:rem.id, mod:rem.modifiedTime, at:now });
     return "Traído de Drive.";
   }
@@ -2765,6 +2830,23 @@ const GD = (() => {
   }
   return { mount, markChanged, addDoc, download, render, pushSheet, pullSheet };
 })();
+
+$("userSel").onchange = e => switchUser(e.target.value);
+$("uRen").onclick = () => { const v = $("uName").value.trim(); if (!v) return; curUser().name = v; saveUsers(); GD.markChanged(); render(); $("uMsg").textContent = `Ahora se llama «${v}».`; };
+$("uAdd").onclick = () => {
+  const name = $("uNew").value.trim(); if (!name){ $("uMsg").textContent = "Escribe el nombre del nuevo usuario."; $("uNew").focus(); return; }
+  const id = "u" + Date.now().toString(36); persist();
+  users.list.push({ id, name }); try { localStorage.setItem(dataKey(id), JSON.stringify(emptyData(name))); } catch(e){}
+  $("uNew").value = ""; switchUser(id); GD.markChanged(); $("uMsg").textContent = `Creado «${name}». Empieza vacío: añade sus inmuebles o importa sus fichas.`;
+};
+armDelete($("uDel"), () => {
+  if (users.list.length < 2) return;
+  const gone = curUser();
+  try { localStorage.removeItem(dataKey(gone.id)); } catch(e){}
+  users.list = users.list.filter(u => u.id !== gone.id); users.cur = users.list[0].id; saveUsers();
+  db = load(); render(); GD.markChanged(); $("uMsg").textContent = `Borrado «${gone.name}» de este aparato.`;
+  $("uDel").textContent = "Borrar este usuario"; delete $("uDel").dataset.armed;
+});
 
 // =====================================================================
 // Arranque
