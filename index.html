@@ -540,17 +540,31 @@ function renderInmuebles(){
         <dt>Adquisición</dt><dd>${esc(label(ADQ, m.adq.forma))}${m.adq.fecha ? " · " + fdate(m.adq.fecha) : ""}</dd>
         <dt>Amortización 3 %</dt><dd class="num">${am ? eur(am.anual) + "/año" : "—"}</dd>
       </dl>
-      <div class="toolbar"><button type="button" data-edit-inm="${m.id}">Editar</button></div></div>`;
+      <div class="toolbar"><button type="button" data-edit-inm="${m.id}">Editar</button>${(() => { const c = vigente(m); return c ? `<button type="button" data-edit-ct="${c.id}">📄 Contrato</button>` : m.situacion === "arrendado" ? `<button type="button" data-new-ct="${m.id}">＋ Contrato</button>` : ""; })()}</div></div>`;
   }).join("") + `</div>`;
   $("v-inmuebles").innerHTML = h;
 }
 
+// Datos del inmueble tal como están en su ficha (no se copian: se leen cada vez)
+function fichaInm(m){
+  if (!m) return `<div class="alert media"><span class="ic">⚠️</span><div><b>Sin inmueble</b>Este contrato no está vinculado a ningún inmueble. Elige uno al editarlo.</div><span></span></div>`;
+  const dir = [m.direccion, [m.cp, m.municipio].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+  return `<dl class="kv" style="background:var(--bg);border-radius:8px;padding:8px 10px">
+    <dt>Dirección</dt><dd>${esc(dir || "—")}</dd>
+    <dt>Ref. catastral</dt><dd class="num">${esc(m.rc || "—")}</dd>
+    ${(m.accesorios || []).map(a => `<dt>${esc(a.tipo === "trastero" ? "Trastero" : a.tipo === "garaje" ? "Garaje" : "Accesorio")}</dt><dd class="num">${esc(a.rc || "—")}</dd>`).join("")}
+    <dt>Arrendadores</dt><dd>${m.tit.map(x => `${esc(tById(x.t)?.nombre || "?")} ${fmt(x.pct, 0)} %`).join(" · ") || "—"}</dd>
+  </dl>`;
+}
 function renderContratos(){
-  const vig = db.contratos.filter(c => c.estado === "vigente"), fin = db.contratos.filter(c => c.estado !== "vigente");
+  const ord = c => { const i = db.inmuebles.findIndex(m => m.id === c.inmueble); return i < 0 ? -1 : i; };
+  const vig = db.contratos.filter(c => c.estado === "vigente").sort((a, b) => ord(a) - ord(b)), fin = db.contratos.filter(c => c.estado !== "vigente").sort((a, b) => ord(a) - ord(b) || (b.fin || "").localeCompare(a.fin || ""));
+  const sinCt = db.inmuebles.filter(m => m.situacion === "arrendado" && !vig.some(c => c.inmueble === m.id));
   const card = c => {
     const m = iById(c.inmueble), a = actualizaciones(c), f = finContrato(c);
     const docs = c.docs.length;
     return `<div class="card"><div class="card-head"><div><h3>${esc(m ? m.alias : "Sin inmueble")}</h3><div class="sub">${esc(inquilinosTxt(c))}</div></div><span class="chip ${c.estado === "vigente" ? "ok" : ""}">${c.estado === "vigente" ? "Vigente" : "Finalizado"}</span></div>
+      ${fichaInm(m)}
       <dl class="kv">
         <dt>Renta</dt><dd class="num">${c.renta ? eur(c.renta) + "/mes" : "—"}</dd>
         <dt>Inicio</dt><dd>${c.inicio ? fdate(c.inicio) : "—"}</dd>
@@ -559,10 +573,11 @@ function renderContratos(){
         <dt>Fianza</dt><dd class="num">${c.fianza.importe ? eur(c.fianza.importe) : "—"}${c.fianza.fecha ? ' <span class="chip ok">Depositada</span>' : ""}</dd>
         <dt>Documentos</dt><dd>${docs ? `📎 ${docs}` : "—"}</dd>
       </dl>
-      <div class="toolbar"><button type="button" data-edit-ct="${c.id}">Editar</button>${c.estado === "vigente" && c.indice !== "ninguno" ? `<button type="button" data-carta="${c.id}">✉️ Carta de subida</button>` : ""}${c.estado === "vigente" ? `<button type="button" data-renov="${c.id}">🔁 Renovar</button>` : ""}</div></div>`;
+      <div class="toolbar"><button type="button" data-edit-ct="${c.id}">Editar</button>${m ? `<button type="button" class="ghost" data-edit-inm="${m.id}">🏢 Ficha</button>` : ""}${c.estado === "vigente" && c.indice !== "ninguno" ? `<button type="button" data-carta="${c.id}">✉️ Carta de subida</button>` : ""}${c.estado === "vigente" ? `<button type="button" data-renov="${c.id}">🔁 Renovar</button>` : ""}</div></div>`;
   };
   let h = `<div class="panel-head"><h2>📄 Contratos e inquilinos</h2><div class="toolbar"><button type="button" id="icsBtn">📅 Al calendario</button><button type="button" class="primary" id="addCt"${db.inmuebles.length ? "" : " disabled"}>＋ Nuevo contrato</button></div></div>`;
   h += vig.length ? `<div class="cards">${vig.map(card).join("")}</div>` : `<div class="empty">No hay contratos vigentes.</div>`;
+  if (sinCt.length) h += `<div class="panel"><div class="panel-head"><h3>🏚️ Alquilados sin contrato</h3></div><ul class="mini">${sinCt.map(m => `<li><span class="grow">${esc(m.alias)}</span><button type="button" data-new-ct="${m.id}">＋ Crear contrato</button></li>`).join("")}</ul></div>`;
   if (fin.length) h += `<details class="panel"><summary><h3 style="display:inline">Contratos finalizados (${fin.length})</h3></summary><div class="cards" style="margin-top:12px">${fin.map(card).join("")}</div></details>`;
   $("v-contratos").innerHTML = h;
 }
@@ -779,7 +794,7 @@ function editCt(id, inmPre){
       ${fDate("c-ini", "Fecha de inicio", c.inicio)}
       <label class="field">Duración (años)<input type="text" inputmode="numeric" id="c-dur" value="${c.duracion ?? ""}" placeholder="0 = indefinido"></label>
       ${fDate("c-fin", "Fecha de fin (si es distinta)", c.fin, "Si la dejas vacía, se calcula con el inicio y la duración.")}
-    </div><div class="calc" id="finCalc"></div></fieldset>
+    </div><div id="c-ficha"></div><p class="note">Los datos del inmueble salen de su ficha: si cambias algo allí, se cambia aquí y en las cartas.</p><div class="calc" id="finCalc"></div></fieldset>
     <fieldset><legend>Arrendatarios</legend><div id="inqRows" style="display:grid;gap:8px">${inqRows()}</div>
       <div class="toolbar"><button type="button" id="inqAdd">＋ Añadir inquilino</button></div></fieldset>
     <fieldset><legend>Renta y actualización</legend><div class="fields">
@@ -829,6 +844,7 @@ function editCt(id, inmPre){
   };
   const refresh = () => {
     readForm();
+    $("c-ficha").innerHTML = fichaInm(iById(c.inmueble));
     const f = finContrato(c);
     $("finCalc").innerHTML = f ? `Fin del contrato: <b>${fdateLong(f)}</b>${c.estado === "vigente" ? ` (${daysTo(f) >= 0 ? `faltan ${daysTo(f)} días` : `venció hace ${-daysTo(f)} días`})` : ""}.` : c.regimen === "antiguo" ? "Contrato de renta antigua: sin fecha de fin." : "Pon la fecha de inicio y la duración para saber cuándo vence.";
     const a = actualizaciones(c);
@@ -926,6 +942,7 @@ document.querySelector("main").addEventListener("click", e => {
   const et = t.closest("[data-edit-tit]"); if (et) return editTit(et.dataset.editTit);
   if (t.closest("#addInm")) return editInm();
   if (t.closest("#addCt")) return editCt();
+  const nc = t.closest("[data-new-ct]"); if (nc) return editCt(null, nc.dataset.newCt);
   if (t.closest("#addTit")) return editTit();
   const mn = t.closest("[data-mov-new]"); if (mn) return editMov(null, mn.dataset.movNew);
   const mv = t.closest("[data-mov]"); if (mv) return editMov(mv.dataset.mov);
