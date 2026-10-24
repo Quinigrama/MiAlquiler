@@ -664,7 +664,8 @@ function editInm(id){
       <label class="check wide"><input type="checkbox" id="m-rev"${m.cat.revisado !== false ? " checked" : ""}> Valor catastral revisado desde 1994 (imputación del 1,1 % si queda vacío)</label>
     </div><div class="calc" id="amCalc"></div></fieldset>
     <fieldset><legend>Accesorios alquilados con él (garaje, trastero)</legend><div id="accRows" style="display:grid;gap:8px">${accRows()}</div>
-      <div class="toolbar"><button type="button" id="accAdd">＋ Añadir accesorio</button></div></fieldset>
+      <div class="toolbar"><button type="button" id="accAdd">＋ Añadir accesorio</button>${db.inmuebles.some(o => o.id !== m.id) ? `<button type="button" id="accFrom">🔗 Usar uno de mis inmuebles</button>` : ""}</div>
+      <div id="accPick" class="choice" hidden></div></fieldset>
     <fieldset><legend>Notas</legend><textarea id="m-notas">${esc(m.notas || "")}</textarea></fieldset>`;
   m.accesorios ||= [];
   function accRows(){ const A = m.accesorios || []; return A.length ? A.map((a, i) => `<div class="rowline" data-ai="${i}"><div class="fields">
@@ -694,11 +695,54 @@ function editInm(id){
     m.cat = { total:money("m-vct"), constr:money("m-vcc"), ref:money("m-vref"), anio:val("m-vca"), revisado:$("m-rev").checked };
     readAcc();
     if (isNew) db.inmuebles.push(m); else db.inmuebles[db.inmuebles.findIndex(x => x.id === m.id)] = m;
+    // Inmuebles que pasan a ser accesorios de este: sus apuntes, muebles y reglas vienen aquí y desaparecen de la lista
+    for (const ab of absorber){
+      const o = iById(ab.id); if (!o) continue;
+      let c = ctsOf(m).find(c => c.estado === "vigente");
+      const oc = ctsOf(o).find(c => c.estado === "vigente") || ctsOf(o)[0];
+      if (c && oc){
+        if (ab.inq) oc.inquilinos.filter(q => q.nombre || q.nif).forEach(q => { const d = c.inquilinos.find(x => (q.nif && x.nif === q.nif)) || c.inquilinos.find(x => !x.nombre); if (d){ d.nombre ||= q.nombre; d.nif ||= q.nif; d.tel ||= q.tel; d.email ||= q.email; } else c.inquilinos.push({ ...q }); });
+        if (ab.renta && oc.renta){ c.renta = (+c.renta || 0) + (+oc.renta || 0); c.notas = [c.notas, `Incluye el ${o.tipo === "garaje" ? "garaje" : "accesorio"} (${eur(oc.renta)}).`].filter(Boolean).join(" "); }
+      }
+      for (const x of db.movs) if (x.inm === o.id) x.inm = m.id;
+      for (const b of db.bienes || []) if (b.inm === o.id) b.inm = m.id;
+      for (const r of db.reglas || []) if (r.inm === o.id) r.inm = m.id;
+      if (curInm === o.id) curInm = m.id;
+      for (const k of db.contratos.filter(k => k.inmueble === o.id)) k.docs.forEach(d => { const dest = c || ctsOf(m)[0]; if (dest) dest.docs.push(d); });
+      db.contratos = db.contratos.filter(k => k.inmueble !== o.id);
+      db.inmuebles = db.inmuebles.filter(x => x.id !== o.id);
+    }
     toast("✓ Inmueble guardado");
   }, isNew ? "" : `<button type="button" class="danger" id="delInm">Eliminar</button>`);
   refresh();
   $("dlgBody").oninput = e => { if (e.target.closest("#titRows") || e.target.closest("#accRows") || /^m-(adq|vc)/.test(e.target.id)) refresh(); };
   $("dlgBody").onchange = $("dlgBody").oninput;
+  const absorber = [];
+  if ($("accFrom")) $("accFrom").onclick = () => {
+    const otros = db.inmuebles.filter(o => o.id !== m.id && !absorber.some(a => a.id === o.id));
+    if (!otros.length){ toast("No quedan inmuebles para añadir."); return; }
+    const box = $("accPick"); box.hidden = false;
+    const pinta = () => {
+      const o = iById($("ap-sel")?.value || otros[0].id), oc = ctsOf(o).find(c => c.estado === "vigente") || ctsOf(o)[0];
+      const inq = oc ? oc.inquilinos.filter(q => q.nombre || q.nif) : [];
+      return `<label class="field">Inmueble que pasa a ser accesorio de este<select id="ap-sel">${otros.map(x => `<option value="${x.id}"${x.id === o.id ? " selected" : ""}>${esc(x.alias)}${x.rc ? " · " + esc(x.rc) : ""}</option>`).join("")}</select></label>
+        ${inq.length ? `<label class="check"><input type="checkbox" id="ap-inq" checked> Pasar ${esc(inq.map(q => q.nombre || q.nif).join(", "))} al contrato de este piso</label>` : ""}
+        ${oc?.renta ? `<label class="check"><input type="checkbox" id="ap-renta"> Sumar su renta (${eur(oc.renta)}/mes) a la de este piso</label>` : ""}
+        <p class="note">Sus datos de catastro y compra pasan aquí como accesorio, y sus apuntes y muebles se unen a este piso. Después deja de aparecer como inmueble propio.</p>
+        <div class="toolbar"><button type="button" class="primary" id="ap-ok">Añadir como accesorio</button><button type="button" id="ap-no">Cancelar</button></div>`;
+    };
+    box.innerHTML = pinta();
+    box.onchange = e => { if (e.target.id === "ap-sel") box.innerHTML = pinta(); };
+    box.onclick = e => {
+      if (e.target.id === "ap-no"){ box.hidden = true; return; }
+      if (e.target.id !== "ap-ok") return;
+      const o = iById($("ap-sel").value); readAcc();
+      m.accesorios.push({ id:"a-" + uid(), tipo:o.tipo === "garaje" ? (/traster/i.test(o.alias) ? "trastero" : "garaje") : "otro", rc:o.rc || "", nombre:o.alias, adq:JSON.parse(JSON.stringify(o.adq || {})), cat:JSON.parse(JSON.stringify(o.cat || {})) });
+      absorber.push({ id:o.id, inq:$("ap-inq")?.checked, renta:$("ap-renta")?.checked });
+      $("accRows").innerHTML = accRows(); box.hidden = true; refresh();
+      toast(`«${o.alias}» irá como accesorio al guardar.`);
+    };
+  };
   $("accAdd").onclick = () => { readAcc(); m.accesorios.push({ id:"a-" + uid(), tipo:"garaje", rc:"", adq:{}, cat:{} }); $("accRows").innerHTML = accRows(); };
   $("accRows").onclick = e => { const b = e.target.closest("[data-adel]"); if (!b) return; readAcc(); m.accesorios.splice(+b.dataset.adel, 1); $("accRows").innerHTML = accRows(); refresh(); };
   $("titAdd").onclick = () => { readTit(); const used = new Set(m.tit.map(x => x.t)); const t = db.titulares.find(t => !used.has(t.id)) || db.titulares[0]; m.tit.push({ t:t.id, pct:0, reg:"ganancial" }); $("titRows").innerHTML = titRows(); refresh(); };
