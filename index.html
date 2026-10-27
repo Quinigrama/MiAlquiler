@@ -327,7 +327,26 @@ const ADQ = [["compra","Compra"],["herencia","Herencia"],["donacion","Donación"
 const REGIMEN = [["ganancial","Gananciales"],["privativo","Privativo"],["proindiviso","Proindiviso"]];
 const REGIMEN_CT = [["antiguo","Anterior al 9/05/1985 (renta antigua)"],["lau94","LAU de 1994 (1995–feb. 2019)"],["lau19","Desde el 6/03/2019"],["ley23","Desde el 26/05/2023 (Ley de vivienda)"]];
 const INDICES = [["IPC","IPC (INE)"],["IRAV","IRAV (INE)"],["fijo","% fijo pactado"],["ninguno","Sin actualización"]];
-const RED_OPTS = [["0.6","60 %: contrato firmado antes del 26/05/2023"],["0.5","50 %: contrato nuevo (caso general)"],["0.7","70 %: zona tensionada, primer alquiler a joven de 18 a 35 años"],["0.6r","60 %: obras de rehabilitación en los 2 años anteriores"],["0.9","90 %: zona tensionada, bajada de renta de más del 5 %"],["0","0 %: no es vivienda habitual del inquilino"]];
+// Reducción del rendimiento neto por alquiler de vivienda (art. 23.2 LIRPF). Desde el 1/12/2026, RDL 29/2026.
+const RED_GRUPOS = [
+  ["Contratos firmados hasta el 30/11/2026", [["0.6","60 %: contrato firmado antes del 26/05/2023"],["0.5","50 %: contrato desde el 26/05/2023 (caso general)"],["0.7","70 %: zona tensionada, primer alquiler a joven de 18 a 35 años"],["0.6r","60 %: obras de rehabilitación en los 2 años anteriores"],["0.9","90 %: zona tensionada, bajada de renta de más del 5 %"]]],
+  ["Contratos firmados desde el 1/12/2026 (si no eres gran tenedor)", [
+    ["1n","100 %: renta más de un 5 % más baja, al renovar con el mismo inquilino tras los 5 años (o con otro, por debajo del límite)"],
+    ["0.85n","85 %: renta más de un 5 % más baja, inquilino de 18 a 35 años"],
+    ["0.7n","70 %: renta más de un 5 % más baja (resto de casos)"],
+    ["0.5n","50 %: renta igual o más baja que la anterior (hasta un 5 %)"],
+    ["0.4n","40 %: renta que sube hasta un 5 %"],["0.3n","30 %: sube entre el 5 % y el 10 %"],["0.25n","25 %: sube entre el 10 % y el 15 %"],["0.2n","20 %: sube entre el 15 % y el 20 %"],["0.15n","15 %: sube más del 20 %"],
+    ["1p","100 %: primer alquiler de la vivienda, renta por debajo del límite de referencia"],["0.5p","50 %: primer alquiler, renta en o por encima del límite"],
+    ["0.7s","70 %: alquiler social (inquilino Administración o entidad sin ánimo de lucro)"],["0.6rn","60 %: obras de rehabilitación en los 2 años anteriores"]]],
+  ["Sin reducción", [["0","0 %: no es vivienda habitual del inquilino"]]]
+];
+const RED_OPTS = RED_GRUPOS.flatMap(g => g[1]);
+const redOptsHtml = v => RED_GRUPOS.map(([g, l]) => `<optgroup label="${esc(g)}">${l.map(([k, t]) => `<option value="${esc(k)}"${String(v ?? "") === k ? " selected" : ""}>${esc(t)}</option>`).join("")}</optgroup>`).join("");
+// Prórroga tácita (art. 10.1 LAU) tras el plazo mínimo de 5 años, si ese plazo acaba después del 1/12/2026: 80 % durante la prórroga
+const PR80_DESDE = "2026-12-02";
+const pr80Desde = c => c && c.pr80 && c.inicio ? addYears(c.inicio, 5) : null;
+// Reducción del contrato en una fecha
+const redCt = (c, d) => { const base = parseFloat(c.red) || 0, p = pr80Desde(c); return p && p >= PR80_DESDE && d >= p ? Math.max(base, 0.8) : base; };
 const FIANZA_ORG = ["Agencia de Vivienda Social (Comunidad de Madrid)","AVRA (Junta de Andalucía)","Otro organismo"];
 const label = (list, v) => (list.find(x => x[0] === v) || [, v || ""])[1];
 
@@ -727,7 +746,7 @@ function editInm(id){
       ${fMoney("m-vcc", "Valor catastral de la construcción (€)", m.cat.constr)}
       ${fMoney("m-vref", "Valor de referencia (€)", m.cat.ref, "El del Catastro, para el patrimonio.")}
       ${fText("m-vca", "Año del recibo", m.cat.anio, 'inputmode="numeric" maxlength="4"')}
-      <label class="check wide"><input type="checkbox" id="m-rev"${m.cat.revisado !== false ? " checked" : ""}> Valor catastral revisado desde 1994 (imputación del 1,1 % si queda vacío)</label>
+      <label class="check wide"><input type="checkbox" id="m-rev"${m.cat.revisado !== false ? " checked" : ""}> Valor catastral del municipio revisado con efectos desde 2012 (imputación del 1,1 %; si no, del 2 %)</label>
     </div><div class="calc" id="amCalc"></div></fieldset>
     <fieldset><legend>Accesorios alquilados con él (garaje, trastero)</legend><div id="accRows" style="display:grid;gap:8px">${accRows()}</div>
       <div class="toolbar"><button type="button" id="accAdd">＋ Añadir accesorio</button>${db.inmuebles.some(o => o.id !== m.id) ? `<button type="button" id="accFrom">🔗 Usar uno de mis inmuebles</button>` : ""}</div>
@@ -881,7 +900,8 @@ function editCt(id, inmPre){
     </div><datalist id="orgList">${FIANZA_ORG.map(o => `<option value="${esc(o)}">`).join("")}</datalist></fieldset>
     <fieldset><legend>Para la declaración</legend><div class="fields">
       <label class="check wide"><input type="checkbox" id="c-hab"${c.habitual ? " checked" : ""}> Es la vivienda habitual del inquilino (da derecho a la reducción)</label>
-      <div class="wide">${fSel("c-red", "Reducción del rendimiento neto", RED_OPTS, c.red)}</div>
+      <div class="wide"><label class="field">Reducción del rendimiento neto<select id="c-red">${redOptsHtml(c.red)}</select></label></div>
+      <label class="check wide"><input type="checkbox" id="c-pr80"${c.pr80 ? " checked" : ""}> En prórroga tácita tras los 5 años mínimos, con la renta dentro del límite de referencia y sin ser gran tenedor (80 % durante la prórroga)</label>
     </div><p class="note" id="redNote"></p></fieldset>
     <fieldset><legend>Documentos</legend><div id="docBox">${docRows()}</div><div class="toolbar"><button type="button" id="docAdd">📎 Adjuntar</button></div></fieldset>
     <fieldset><legend>Notas</legend><textarea id="c-notas">${esc(c.notas || "")}</textarea></fieldset>`;
@@ -889,7 +909,7 @@ function editCt(id, inmPre){
   const readForm = () => {
     readInq();
     Object.assign(c, { inmueble:val("c-inm"), estado:val("c-est"), regimen:val("c-reg"), firma:val("c-firma"), inicio:val("c-ini"), duracion:val("c-dur") === "" ? null : Math.max(0, parseInt(val("c-dur")) || 0), fin:val("c-fin"),
-      renta:money("c-renta"), diaPago:val("c-dia"), indice:val("c-idx"), fijo:money("c-fijo"), actRef:val("c-actref"), ultAct:val("c-ult"), habitual:$("c-hab").checked, red:val("c-red"), notas:val("c-notas") });
+      renta:money("c-renta"), diaPago:val("c-dia"), indice:val("c-idx"), fijo:money("c-fijo"), actRef:val("c-actref"), ultAct:val("c-ult"), habitual:$("c-hab").checked, red:val("c-red"), pr80:$("c-pr80").checked, notas:val("c-notas") });
     c.fianza = { importe:money("f-imp"), org:val("f-org"), fecha:val("f-fecha"), ref:val("f-ref") };
     c.inquilinos.forEach(p => p.nif = p.nif.toUpperCase().replace(/[\s.-]/g, ""));
   };
@@ -900,7 +920,9 @@ function editCt(id, inmPre){
     $("finCalc").innerHTML = f ? `Fin del contrato: <b>${fdateLong(f)}</b>${c.estado === "vigente" ? ` (${daysTo(f) >= 0 ? `faltan ${daysTo(f)} días` : `venció hace ${-daysTo(f)} días`})` : ""}.` : c.regimen === "antiguo" ? "Contrato de renta antigua: sin fecha de fin." : "Pon la fecha de inicio y la duración para saber cuándo vence.";
     const a = actualizaciones(c);
     $("actCalc").innerHTML = c.indice === "ninguno" ? "Este contrato no se actualiza." : a ? (a.pendiente ? `⚠️ La subida del ${fdate(a.last)} está <b>pendiente</b>.` : `Próxima subida: <b>${fdateLong(a.next)}</b>.`) + (c.renta && c.indice === "fijo" && c.fijo ? ` Con el ${fmt(c.fijo)} % pactado, la renta pasaría a <b>${eur(c.renta * (1 + c.fijo / 100))}</b>.` : "") : "Pon la fecha de inicio (o la de referencia) para calcular los aniversarios.";
-    $("redNote").textContent = !c.habitual ? "Si no es vivienda habitual del inquilino, no hay reducción." : c.regimen === "ley23" ? "Contratos desde el 26/05/2023: el caso general es el 50 %; los porcentajes mayores dependen de la zona tensionada." : "Contratos anteriores al 26/05/2023: reducción del 60 %.";
+    const p80 = pr80Desde(c);
+    $("redNote").innerHTML = (!c.habitual ? "Si no es vivienda habitual del inquilino, no hay reducción." : c.inicio && c.inicio >= "2026-12-01" ? "Contrato desde el 1/12/2026: el porcentaje depende de cómo cambia la renta frente a la anterior (RDL 29/2026)." : c.regimen === "ley23" ? "Contratos desde el 26/05/2023: el caso general es el 50 %; los porcentajes mayores dependen de la zona tensionada." : "Contratos anteriores al 26/05/2023: reducción del 60 %.")
+      + (c.pr80 ? (p80 && p80 >= PR80_DESDE ? ` Prórroga tácita: <b>80 % desde el ${fdate(p80)}</b>.` : p80 ? " Prórroga tácita: <b>no aplica</b>, porque los 5 años mínimos acabaron antes del 1/12/2026." : " Prórroga tácita: pon la fecha de inicio.") : "");
     if (!$("s-desde").dataset.touched){ const a2 = actualizaciones(c); $("s-desde").value = a2 ? (a2.pendiente ? a2.last : a2.next) : todayIso(); }
   };
   openDlg(isNew ? "Nuevo contrato" : (iById(c.inmueble)?.alias || "Contrato"), body, () => {
@@ -1071,6 +1093,25 @@ function diasAlquilado(m, y){
   if (cur){ unidos.push(cur); dias += Math.round((cur[1] - cur[0]) / 86400000) + 1; }
   return { dias, tot, supuesto, tramos:unidos };
 }
+// Reducción del año: media de los porcentajes de cada contrato (y de su prórroga tácita al 80 %) ponderada por días
+function redAnio(m, y){
+  if (m.tipo !== "vivienda") return { pct:0, mixto:false, red:"0" };
+  const a = new Date(y, 0, 1), z = new Date(y, 11, 31); let d = 0, w = 0; const vistos = new Set();
+  for (const c of ctsOf(m)){
+    let ini = c.inicio ? toDate(c.inicio) : (c.estado === "vigente" ? a : null); if (!ini) continue;
+    const ff = c.estado === "vigente" ? null : (c.fin || finContrato(c)), fin = ff ? toDate(ff) : z;
+    const s0 = ini > a ? ini : a, e0 = fin < z ? fin : z; if (e0 < s0) continue;
+    const p = c.habitual ? pr80Desde(c) : null, corte = p && p >= PR80_DESDE ? toDate(p) : null;
+    const base = c.habitual ? parseFloat(c.red) || 0 : 0;
+    const tramo = (s1, e1, r) => { if (e1 < s1) return; const n = Math.round((e1 - s1) / DAY) + 1; d += n; w += n * r; vistos.add(r); };
+    if (corte && corte <= e0){ tramo(s0, new Date(Math.min(e0, corte.getTime() - DAY)), base); tramo(corte > s0 ? corte : s0, e0, Math.max(base, 0.8)); }
+    else tramo(s0, e0, base);
+  }
+  const pct = d ? Math.round(w / d * 10000) / 10000 : 0;
+  const ct = ctsOf(m).find(c => c.estado === "vigente") || ctsOf(m)[0];
+  const mixto = vistos.size > 1;
+  return { pct, mixto, red: mixto ? String(pct) : (ct && ct.habitual ? (pct >= 0.8 && (parseFloat(ct.red) || 0) < 0.8 ? "0.8" : ct.red) : "0") };
+}
 // Cuentas de un inmueble en un año: lo que irá a la declaración (antes de amortizaciones)
 function cuentas(m, y){
   const ms = movsOf(y, m.id), { dias, tot, supuesto } = diasAlquilado(m, y);
@@ -1091,12 +1132,11 @@ function cuentas(m, y){
   const neto = ingresos - limDed - otros;
   const amI = amortInmAnio(m, y).v, amM = amortMuebles(m, y);
   const netoAm = neto - amI - amM;
-  const ct = ctsOf(m).filter(c => c.estado === "vigente")[0] || ctsOf(m)[0];
-  const redPct = ct && ct.habitual && m.tipo === "vivienda" ? parseFloat(ct.red) || 0 : 0;
+  const rA = redAnio(m, y), redPct = rA.pct;
   const reduccion = netoAm > 0 ? Math.round(netoAm * redPct * 100) / 100 : 0;
   const vacio = Math.max(0, tot - dias);
   const imputacion = m.situacion !== "habitual" && vacio && +m.cat.total ? Math.round(m.cat.total * (m.cat.revisado !== false ? 0.011 : 0.02) * vacio / tot * 100) / 100 : 0;
-  return { ingresos, grupos, limit, pendAnt, limDed, exceso, otros, neto, amI, amM, netoAm, redPct, reduccion, netoRed:netoAm - reduccion, imputacion, vacio, aparte, prorrateado, dias, tot, supuesto, n:ms.length };
+  return { ingresos, grupos, limit, pendAnt, limDed, exceso, otros, neto, amI, amM, netoAm, redPct, redKey:rA.red, redMixto:rA.mixto, reduccion, netoRed:netoAm - reduccion, imputacion, vacio, aparte, prorrateado, dias, tot, supuesto, n:ms.length };
 }
 
 function renderCuentas(){
@@ -1123,7 +1163,7 @@ function renderCuentas(){
         ${r.amI ? `<dt>Amortización del inmueble</dt><dd class="num">${eur(r.amI)}</dd>` : ""}
         ${r.amM ? `<dt>Amortización de muebles</dt><dd class="num">${eur(r.amM)}</dd>` : ""}
         <dt><b>Rendimiento neto</b></dt><dd class="num"><b>${eur(r.netoAm)}</b></dd>
-        ${r.reduccion ? `<dt>Reducción ${fmt(r.redPct * 100, 0)} % (vivienda)</dt><dd class="num">−${eur(r.reduccion)}</dd>` : ""}
+        ${r.reduccion ? `<dt>Reducción ${fmt(r.redPct * 100, r.redMixto ? 2 : 0)} % (vivienda)</dt><dd class="num">−${eur(r.reduccion)}</dd>` : ""}
         <dt><b>Rendimiento neto reducido</b></dt><dd class="num"><b>${eur(r.netoRed)}</b></dd>
         ${r.imputacion ? `<dt>Imputación de rentas (${r.vacio} días vacío)</dt><dd class="num">${eur(r.imputacion)}</dd>` : ""}
       </dl>
@@ -1601,6 +1641,13 @@ function editCarta(ctId){
 }
 
 // ---------- Renovar, prorrogar o terminar un contrato ----------
+// Reducción de un contrato nuevo con el mismo inquilino según cómo cambia la renta (RDL 29/2026, desde el 1/12/2026)
+function redRenovacion(ini, vieja, nueva){
+  if (!ini || ini < "2026-12-01") return "0.5";
+  if (!(vieja > 0) || !(nueva > 0)) return "0.5n";
+  const v = nueva / vieja - 1;
+  return v < -0.05 ? "1n" : v <= 0 ? "0.5n" : v <= 0.05 ? "0.4n" : v <= 0.10 ? "0.3n" : v <= 0.15 ? "0.25n" : v <= 0.20 ? "0.2n" : "0.15n";
+}
 function editRenovar(ctId){
   const c = cById(ctId); if (!c) return;
   const m = iById(c.inmueble), fin = finContrato(c) || todayIso();
@@ -1616,7 +1663,7 @@ function editRenovar(ctId){
       ${fDate("r-ini", "Inicio del nuevo contrato", iso(new Date(toDate(fin).getTime() + DAY)))}
       <label class="field">Duración (años)<input type="text" inputmode="numeric" id="r-dur" value="5"></label>
       ${fMoney("r-renta", "Renta del nuevo contrato (€/mes)", c.renta)}
-      <div class="wide alert media"><span class="ic">⚠️</span><div><b>Ojo con lo fiscal</b>Un contrato firmado desde el 26/05/2023 ya no tiene la reducción del 60 %: el caso general es el 50 %. Y sus subidas anuales van con el IRAV. Lo pongo así en el contrato nuevo; cámbialo si os corresponde otro caso.</div><span></span></div>
+      <div class="wide alert media"><span class="ic">⚠️</span><div><b>Ojo con lo fiscal</b>Un contrato firmado desde el 26/05/2023 ya no tiene la reducción del 60 %, y sus subidas anuales van con el IRAV. Si se firma desde el 1/12/2026, la reducción depende de la renta nueva frente a la anterior: <b>100 %</b> si la bajas más de un 5 %, <b>50 %</b> si la mantienes o bajas menos, y del <b>40 % al 15 %</b> si la subes. La calculo con la renta que pongas; cámbiala en el contrato si os corresponde otro caso (por ejemplo, inquilino de 18 a 35 años).</div><span></span></div>
     </div>
     <div id="r-f" class="fields" hidden>
       ${fDate("r-sal", "Fecha de salida", fin)}
@@ -1635,7 +1682,7 @@ function editRenovar(ctId){
       const ini = val("r-ini"); if (!ini) return false;
       const finViejo = iso(new Date(toDate(ini).getTime() - DAY));
       k.estado = "finalizado"; k.fin = finViejo;
-      const n = { ...JSON.parse(JSON.stringify(k)), id:"c-" + uid(), estado:"vigente", firma:ini, inicio:ini, duracion:Math.max(1, parseInt(val("r-dur")) || 5), fin:"", renta:money("r-renta") || k.renta, actRef:"", ultAct:"", historial:[], docs:[], cartas:[], prorrogas:[], regimen:"ley23", red:"0.5", indice:k.indice === "IPC" ? "IRAV" : k.indice, notas:`Renovación del contrato de ${k.inicio ? fdate(k.inicio) : "antes"}.` };
+      const n = { ...JSON.parse(JSON.stringify(k)), id:"c-" + uid(), estado:"vigente", firma:ini, inicio:ini, duracion:Math.max(1, parseInt(val("r-dur")) || 5), fin:"", renta:money("r-renta") || k.renta, actRef:"", ultAct:"", historial:[], docs:[], cartas:[], prorrogas:[], regimen:"ley23", red:redRenovacion(ini, k.renta, money("r-renta") || k.renta), pr80:false, indice:k.indice === "IPC" ? "IRAV" : k.indice, notas:`Renovación del contrato de ${k.inicio ? fdate(k.inicio) : "antes"}.` };
       db.contratos.push(n);
       toast("✓ Contrato nuevo creado. Adjunta el PDF firmado.");
     } else {
@@ -1700,7 +1747,7 @@ function paraMiRenta(){
     years[y] = { declaraciones:fiscal(y).map(dc => ({ id:dc.id, nombre:dc.nombre, inmuebles:dc.inms.map(x => {
       const ct = x.cts.find(c => c.estado === "vigente") || x.cts[0];
       return { id:x.m.id, nombre:x.m.alias, rc:x.m.rc || "", ing:x.r.ingresos, intRep:x.r.limDed, gastos:x.r.otros, amort:Math.round((x.r.amI + x.r.amM) * 100) / 100, amortInm:x.r.amI, amortMue:x.r.amM,
-        pct:x.pct, red:ct && ct.habitual && x.m.tipo === "vivienda" ? ct.red : "0", valor:[x.m, ...(x.m.accesorios || [])].reduce((a, o) => a + Math.max(+o.cat?.total || 0, +o.cat?.ref || 0, +o.adq?.precio || 0), 0) || null, imputacion:x.r.imputacion, exceso:x.r.exceso, dias:x.r.dias };
+        pct:x.pct, red:x.r.redKey, redPct:x.r.redPct, valor:[x.m, ...(x.m.accesorios || [])].reduce((a, o) => a + Math.max(+o.cat?.total || 0, +o.cat?.ref || 0, +o.adq?.precio || 0), 0) || null, imputacion:x.r.imputacion, exceso:x.r.exceso, dias:x.r.dias };
     }) })) };
   }
   return { app:"miAlquiler-miRenta", v:1, at:new Date().toISOString(), tipo:db.declaracion.tipo, years };
@@ -1739,7 +1786,7 @@ function renderRenta(){
           ${r.amI ? fila("Amortización del inmueble", r.amI, p) : ""}
           ${r.amM ? fila("Amortización de bienes muebles", r.amM, p) : ""}
           ${fila("<b>Rendimiento neto</b>", r.netoAm, p, "tot")}
-          ${r.reduccion ? fila(`Reducción por arrendamiento de vivienda (${fmt(r.redPct * 100, 0)} %)`, -r.reduccion, p) : ""}
+          ${r.reduccion ? fila(`Reducción por arrendamiento de vivienda (${fmt(r.redPct * 100, r.redMixto ? 2 : 0)} %)`, -r.reduccion, p) : ""}
           ${fila("<b>Rendimiento neto reducido</b>", r.netoRed, p, "tot")}
           ${r.imputacion ? fila(`Imputación de rentas (${r.vacio} días a disposición)`, r.imputacion, p) : ""}
           </tbody></table></div>
@@ -1766,7 +1813,7 @@ function textoResumen(){
       out.push(``, `${x.m.alias} (${fmt(x.pct, 0)} %) · Ref. catastral ${x.m.rc || "—"}`, `Días arrendado: ${r.dias} de ${r.tot} · NIF arrendatarios: ${x.nifs.join(", ") || "—"}`,
         `Ingresos íntegros: ${v(r.ingresos)}`, ...(r.limDed ? [`Intereses + reparación: ${v(r.limDed)}`] : []), ...[...r.grupos.entries()].filter(([, a]) => a > 0.004).map(([g, a]) => `${g}: ${v(a)}`),
         ...(r.amI ? [`Amortización del inmueble: ${v(r.amI)}`] : []), ...(r.amM ? [`Amortización de bienes muebles: ${v(r.amM)}`] : []),
-        `Rendimiento neto: ${v(r.netoAm)}`, ...(r.reduccion ? [`Reducción ${fmt(r.redPct * 100, 0)} %: -${v(r.reduccion)}`] : []), `Rendimiento neto reducido: ${v(r.netoRed)}`,
+        `Rendimiento neto: ${v(r.netoAm)}`, ...(r.reduccion ? [`Reducción ${fmt(r.redPct * 100, r.redMixto ? 2 : 0)} %: -${v(r.reduccion)}`] : []), `Rendimiento neto reducido: ${v(r.netoRed)}`,
         ...(r.imputacion ? [`Imputación de rentas: ${v(r.imputacion)}`] : []), ...(r.exceso > 0.004 ? [`Pasa a ${curYear + 1}: ${v(r.exceso)}`] : []));
     }
     out.push("", `TOTAL rendimiento neto reducido: ${eur(dc.netoRed)}`, "");
@@ -2454,7 +2501,7 @@ function aplicarFicha(f, m, opt){
   f.nifs.forEach((n, i) => c.inquilinos[i].nif = n);
   if (f.nombreInq) c.inquilinos[0].nombre = f.nombreInq;
   f.tels.forEach((t, i) => { if (c.inquilinos[Math.min(i, c.inquilinos.length - 1)] && !c.inquilinos[Math.min(i, c.inquilinos.length - 1)].tel) c.inquilinos[Math.min(i, c.inquilinos.length - 1)].tel = t; });
-  if (f.fcontrato){ c.firma = f.fcontrato; c.inicio = f.fcontrato; c.regimen = regimenPorFecha(f.fcontrato); c.red = c.regimen === "ley23" ? "0.5" : "0.6"; }
+  if (f.fcontrato){ c.firma = f.fcontrato; c.inicio = f.fcontrato; c.regimen = regimenPorFecha(f.fcontrato); c.red = f.fcontrato >= "2026-12-01" ? "0.5n" : c.regimen === "ley23" ? "0.5" : "0.6"; }
   if (f.renov){ c.fin = f.renov; }
   if (f.duracion) c.duracion = f.duracion;
   if (c.regimen === "antiguo"){ c.duracion = 0; c.fin = ""; }
