@@ -348,6 +348,20 @@ const PR80_DESDE = "2026-12-02";
 const pr80Desde = c => c && c.pr80 !== false && c.bajoIndice !== false && c.regimen !== "antiguo" && c.inicio ? addYears(c.inicio, 5) : null;
 const pr80Aplica = c => { const p = pr80Desde(c); return p && p >= PR80_DESDE ? p : null; };
 // Reducción del contrato en una fecha
+// Próximo vencimiento y fecha límite para avisar de que no se prorroga (art. 9 y 10 LAU: 5 años obligatorios y hasta 3 prórrogas anuales;
+// el arrendador avisa con 4 meses de antelación)
+function preaviso(c){
+  if (!c || c.estado !== "vigente" || c.regimen === "antiguo" || !c.inicio) return null;
+  const dur = Math.max(1, +c.duracion || 5), hoy = todayIso();
+  for (let k = 0; k <= 3; k++){
+    const fin = iso(new Date(toDate(addYears(c.inicio, dur + k)).getTime() - DAY));
+    if (fin < hoy) continue;
+    const f = toDate(fin), lim = new Date(f.getFullYear(), f.getMonth() - 4, f.getDate());
+    if (lim.getDate() !== f.getDate()) lim.setDate(0);
+    return { fin, limite:iso(lim), k, tipo: k === 0 ? `los ${dur} años obligatorios` : `la ${k}.ª prórroga anual (de 3)` };
+  }
+  return null;
+}
 const redCt = (c, d) => { const base = parseFloat(c.red) || 0, p = pr80Aplica(c); return p && d >= p ? Math.max(base, 0.8) : base; };
 const FIANZA_ORG = ["Agencia de Vivienda Social (Comunidad de Madrid)","AVRA (Junta de Andalucía)","Otro organismo"];
 const label = (list, v) => (list.find(x => x[0] === v) || [, v || ""])[1];
@@ -495,6 +509,10 @@ function avisos(){
     const p80 = c.habitual && m?.tipo === "vivienda" ? pr80Aplica(c) : null;
     if (p80){ const d = daysTo(p80);
       if (d > 0 && d <= 400) add("media", "💡", `${name}: el ${fdate(p80)} cumple 5 años. No firméis un contrato nuevo`, `Si nadie avisa, sigue solo en prórroga tácita y la reducción de la Renta sube del ${fmt((parseFloat(c.red) || 0) * 100, 0)} % al 80 % (RDL 29/2026). Un contrato nuevo con la misma renta bajaría al 50 %, y subiendo la renta, al 40 % o menos.`, { ct:c.id }); }
+    const pv = preaviso(c);
+    if (pv){ const d = daysTo(pv.limite);
+      if (d >= 0 && d <= 120) add(d <= 30 ? "alta" : "media", "📮", `${name}: si queréis recuperar el piso, avisad antes del ${fdate(pv.limite)}`,
+        `El ${fdate(pv.fin)} acaban ${pv.tipo}. Para que no se prorrogue, el arrendador tiene que avisar al inquilino con al menos 4 meses de antelación (art. 10 LAU), por un medio que deje constancia, como un burofax. Si se convalida el RDL 28/2026, serán 6 meses. Si no avisáis, sigue un año más${p80 && pv.fin >= p80 ? "" : p80 ? ", ya con el 80 % de reducción" : ""}. Si queréis que sigan, no hay que hacer nada.`, { ct:c.id }); }
     const a = actualizaciones(c);
     if (!a && c.indice !== "ninguno" && !c.inicio && !c.actRef) add("info", "📈", `${name}: ¿cuándo toca la subida?`, "Pon la fecha de inicio del contrato o la de referencia de la subida para avisarte cada año.", { ct:c.id });
     if (a){
@@ -1713,6 +1731,8 @@ function descargarIcs(){
     const a = actualizaciones(c);
     if (a) for (let i = 0; i < 3; i++) add(addYears(a.next, i), `📈 Subida ${c.indice} · ${name}`, "Calcula la subida en www.ine.es/calcula y manda la carta desde Mi Alquiler.", 20);
     const f = finContrato(c); if (f && f >= todayIso()) add(f, `📅 Fin del contrato · ${name}`, "Revisa si se prorroga, se renueva o termina. Ojo con los plazos de preaviso.", 120);
+    const pv = preaviso(c);
+    if (pv) add(pv.limite, `📮 Último día para avisar de no prórroga · ${name}`, `El ${fdate(pv.fin)} acaban ${pv.tipo}. Si queréis recuperar el piso, avisad al inquilino por burofax antes de hoy (4 meses de antelación). Si queréis que siga, no hagáis nada.`, 30);
   }
   if (!ev.length){ toast("No hay fechas que añadir: completa los contratos."); return; }
   const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Mi Alquiler//ES", "CALSCALE:GREGORIAN", ...ev, "END:VCALENDAR"].join("\r\n");
