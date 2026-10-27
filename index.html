@@ -344,9 +344,11 @@ const RED_OPTS = RED_GRUPOS.flatMap(g => g[1]);
 const redOptsHtml = v => RED_GRUPOS.map(([g, l]) => `<optgroup label="${esc(g)}">${l.map(([k, t]) => `<option value="${esc(k)}"${String(v ?? "") === k ? " selected" : ""}>${esc(t)}</option>`).join("")}</optgroup>`).join("");
 // Prórroga tácita (art. 10.1 LAU) tras el plazo mínimo de 5 años, si ese plazo acaba después del 1/12/2026: 80 % durante la prórroga
 const PR80_DESDE = "2026-12-02";
-const pr80Desde = c => c && c.pr80 && c.inicio ? addYears(c.inicio, 5) : null;
+// Automático: se aplica si el contrato sigue tras sus 5 años sin firmar otro nuevo, salvo que lo desmarques (gran tenedor, renta por encima del límite…)
+const pr80Desde = c => c && c.pr80 !== false && c.bajoIndice !== false && c.regimen !== "antiguo" && c.inicio ? addYears(c.inicio, 5) : null;
+const pr80Aplica = c => { const p = pr80Desde(c); return p && p >= PR80_DESDE ? p : null; };
 // Reducción del contrato en una fecha
-const redCt = (c, d) => { const base = parseFloat(c.red) || 0, p = pr80Desde(c); return p && p >= PR80_DESDE && d >= p ? Math.max(base, 0.8) : base; };
+const redCt = (c, d) => { const base = parseFloat(c.red) || 0, p = pr80Aplica(c); return p && d >= p ? Math.max(base, 0.8) : base; };
 const FIANZA_ORG = ["Agencia de Vivienda Social (Comunidad de Madrid)","AVRA (Junta de Andalucía)","Otro organismo"];
 const label = (list, v) => (list.find(x => x[0] === v) || [, v || ""])[1];
 
@@ -490,6 +492,9 @@ function avisos(){
       if (d < 0) add("alta", "📅", `${name}: el contrato venció el ${fdate(fin)}`, "Si sigue en prórroga, apunta la nueva fecha de fin o marca el contrato como finalizado.", { ct:c.id });
       else if (d <= 150) add(d <= 60 ? "alta" : "media", "📅", `${name}: el contrato vence el ${fdate(fin)}`, `Quedan ${d} ${plural(d,"día","días")}. Revisa si se prorroga o se renueva y los plazos de preaviso del contrato.`, { ct:c.id });
     }
+    const p80 = c.habitual && m?.tipo === "vivienda" ? pr80Aplica(c) : null;
+    if (p80){ const d = daysTo(p80);
+      if (d > 0 && d <= 400) add("media", "💡", `${name}: el ${fdate(p80)} cumple 5 años. No firméis un contrato nuevo`, `Si nadie avisa, sigue solo en prórroga tácita y la reducción de la Renta sube del ${fmt((parseFloat(c.red) || 0) * 100, 0)} % al 80 % (RDL 29/2026). Un contrato nuevo con la misma renta bajaría al 50 %, y subiendo la renta, al 40 % o menos.`, { ct:c.id }); }
     const a = actualizaciones(c);
     if (!a && c.indice !== "ninguno" && !c.inicio && !c.actRef) add("info", "📈", `${name}: ¿cuándo toca la subida?`, "Pon la fecha de inicio del contrato o la de referencia de la subida para avisarte cada año.", { ct:c.id });
     if (a){
@@ -901,7 +906,8 @@ function editCt(id, inmPre){
     <fieldset><legend>Para la declaración</legend><div class="fields">
       <label class="check wide"><input type="checkbox" id="c-hab"${c.habitual ? " checked" : ""}> Es la vivienda habitual del inquilino (da derecho a la reducción)</label>
       <div class="wide"><label class="field">Reducción del rendimiento neto<select id="c-red">${redOptsHtml(c.red)}</select></label></div>
-      <label class="check wide"><input type="checkbox" id="c-pr80"${c.pr80 ? " checked" : ""}> En prórroga tácita tras los 5 años mínimos, con la renta dentro del límite de referencia y sin ser gran tenedor (80 % durante la prórroga)</label>
+      <label class="check wide"><input type="checkbox" id="c-bajo"${c.bajoIndice !== false ? " checked" : ""}> La renta está por debajo del límite del sistema de índices de precios de referencia</label>
+      <label class="check wide"><input type="checkbox" id="c-pr80"${c.pr80 !== false ? " checked" : ""}> Aplicar el 80 % cuando el contrato siga en prórroga tácita tras sus 5 años (automático; desmárcalo si sois grandes tenedores)</label>
     </div><p class="note" id="redNote"></p></fieldset>
     <fieldset><legend>Documentos</legend><div id="docBox">${docRows()}</div><div class="toolbar"><button type="button" id="docAdd">📎 Adjuntar</button></div></fieldset>
     <fieldset><legend>Notas</legend><textarea id="c-notas">${esc(c.notas || "")}</textarea></fieldset>`;
@@ -909,7 +915,7 @@ function editCt(id, inmPre){
   const readForm = () => {
     readInq();
     Object.assign(c, { inmueble:val("c-inm"), estado:val("c-est"), regimen:val("c-reg"), firma:val("c-firma"), inicio:val("c-ini"), duracion:val("c-dur") === "" ? null : Math.max(0, parseInt(val("c-dur")) || 0), fin:val("c-fin"),
-      renta:money("c-renta"), diaPago:val("c-dia"), indice:val("c-idx"), fijo:money("c-fijo"), actRef:val("c-actref"), ultAct:val("c-ult"), habitual:$("c-hab").checked, red:val("c-red"), pr80:$("c-pr80").checked, notas:val("c-notas") });
+      renta:money("c-renta"), diaPago:val("c-dia"), indice:val("c-idx"), fijo:money("c-fijo"), actRef:val("c-actref"), ultAct:val("c-ult"), habitual:$("c-hab").checked, red:val("c-red"), pr80:$("c-pr80").checked, bajoIndice:$("c-bajo").checked, notas:val("c-notas") });
     c.fianza = { importe:money("f-imp"), org:val("f-org"), fecha:val("f-fecha"), ref:val("f-ref") };
     c.inquilinos.forEach(p => p.nif = p.nif.toUpperCase().replace(/[\s.-]/g, ""));
   };
@@ -922,7 +928,7 @@ function editCt(id, inmPre){
     $("actCalc").innerHTML = c.indice === "ninguno" ? "Este contrato no se actualiza." : a ? (a.pendiente ? `⚠️ La subida del ${fdate(a.last)} está <b>pendiente</b>.` : `Próxima subida: <b>${fdateLong(a.next)}</b>.`) + (c.renta && c.indice === "fijo" && c.fijo ? ` Con el ${fmt(c.fijo)} % pactado, la renta pasaría a <b>${eur(c.renta * (1 + c.fijo / 100))}</b>.` : "") : "Pon la fecha de inicio (o la de referencia) para calcular los aniversarios.";
     const p80 = pr80Desde(c);
     $("redNote").innerHTML = (!c.habitual ? "Si no es vivienda habitual del inquilino, no hay reducción." : c.inicio && c.inicio >= "2026-12-01" ? "Contrato desde el 1/12/2026: el porcentaje depende de cómo cambia la renta frente a la anterior (RDL 29/2026)." : c.regimen === "ley23" ? "Contratos desde el 26/05/2023: el caso general es el 50 %; los porcentajes mayores dependen de la zona tensionada." : "Contratos anteriores al 26/05/2023: reducción del 60 %.")
-      + (c.pr80 ? (p80 && p80 >= PR80_DESDE ? ` Prórroga tácita: <b>80 % desde el ${fdate(p80)}</b>.` : p80 ? " Prórroga tácita: <b>no aplica</b>, porque los 5 años mínimos acabaron antes del 1/12/2026." : " Prórroga tácita: pon la fecha de inicio.") : "");
+      + (c.regimen === "antiguo" ? "" : !c.habitual ? "" : c.bajoIndice === false ? " Con la renta por encima del límite no hay 80 % en la prórroga." : c.pr80 === false ? "" : (p80 && p80 >= PR80_DESDE ? ` Si no firmáis un contrato nuevo, desde el <b>${fdate(p80)}</b> sigue en prórroga tácita con un <b>80 %</b>.` : p80 ? " Los 5 años mínimos acabaron antes del 1/12/2026: sin 80 % en la prórroga." : " Pon la fecha de inicio para saber cuándo pasa al 80 %."));
     if (!$("s-desde").dataset.touched){ const a2 = actualizaciones(c); $("s-desde").value = a2 ? (a2.pendiente ? a2.last : a2.next) : todayIso(); }
   };
   openDlg(isNew ? "Nuevo contrato" : (iById(c.inmueble)?.alias || "Contrato"), body, () => {
@@ -1101,7 +1107,7 @@ function redAnio(m, y){
     let ini = c.inicio ? toDate(c.inicio) : (c.estado === "vigente" ? a : null); if (!ini) continue;
     const ff = c.estado === "vigente" ? null : (c.fin || finContrato(c)), fin = ff ? toDate(ff) : z;
     const s0 = ini > a ? ini : a, e0 = fin < z ? fin : z; if (e0 < s0) continue;
-    const p = c.habitual ? pr80Desde(c) : null, corte = p && p >= PR80_DESDE ? toDate(p) : null;
+    const p = c.habitual ? pr80Aplica(c) : null, corte = p ? toDate(p) : null;
     const base = c.habitual ? parseFloat(c.red) || 0 : 0;
     const tramo = (s1, e1, r) => { if (e1 < s1) return; const n = Math.round((e1 - s1) / DAY) + 1; d += n; w += n * r; vistos.add(r); };
     if (corte && corte <= e0){ tramo(s0, new Date(Math.min(e0, corte.getTime() - DAY)), base); tramo(corte > s0 ? corte : s0, e0, Math.max(base, 0.8)); }
@@ -1663,7 +1669,8 @@ function editRenovar(ctId){
       ${fDate("r-ini", "Inicio del nuevo contrato", iso(new Date(toDate(fin).getTime() + DAY)))}
       <label class="field">Duración (años)<input type="text" inputmode="numeric" id="r-dur" value="5"></label>
       ${fMoney("r-renta", "Renta del nuevo contrato (€/mes)", c.renta)}
-      <div class="wide alert media"><span class="ic">⚠️</span><div><b>Ojo con lo fiscal</b>Un contrato firmado desde el 26/05/2023 ya no tiene la reducción del 60 %, y sus subidas anuales van con el IRAV. Si se firma desde el 1/12/2026, la reducción depende de la renta nueva frente a la anterior: <b>100 %</b> si la bajas más de un 5 %, <b>50 %</b> si la mantienes o bajas menos, y del <b>40 % al 15 %</b> si la subes. La calculo con la renta que pongas; cámbiala en el contrato si os corresponde otro caso (por ejemplo, inquilino de 18 a 35 años).</div><span></span></div>
+      ${pr80Aplica(c) ? `<div class="wide alert alta"><span class="ic">💡</span><div><b>Mejor no firmar contrato nuevo</b>Si dejáis que siga el mismo contrato (prórroga), desde el ${fdate(pr80Aplica(c))} la reducción sube al 80 %. Con un contrato nuevo y la misma renta bajaría al 50 %.</div><span></span></div>` : ""}
+      <div class="wide alert media"><span class="ic">⚠️</span><div><b>Ojo con lo fiscal</b>Un contrato firmado desde el 26/05/2023 ya no tiene la reducción del 60 %, y sus subidas anuales van con el IRAV. Si se firma desde el 1/12/2026, la reducción depende de la renta nueva frente a la anterior: <strong>100 %</strong> si la bajas más de un 5 %, <strong>50 %</strong> si la mantienes o bajas menos, y del <strong>40 % al 15 %</strong> si la subes. La calculo con la renta que pongas; cámbiala en el contrato si os corresponde otro caso (por ejemplo, inquilino de 18 a 35 años).</div><span></span></div>
     </div>
     <div id="r-f" class="fields" hidden>
       ${fDate("r-sal", "Fecha de salida", fin)}
@@ -1682,7 +1689,7 @@ function editRenovar(ctId){
       const ini = val("r-ini"); if (!ini) return false;
       const finViejo = iso(new Date(toDate(ini).getTime() - DAY));
       k.estado = "finalizado"; k.fin = finViejo;
-      const n = { ...JSON.parse(JSON.stringify(k)), id:"c-" + uid(), estado:"vigente", firma:ini, inicio:ini, duracion:Math.max(1, parseInt(val("r-dur")) || 5), fin:"", renta:money("r-renta") || k.renta, actRef:"", ultAct:"", historial:[], docs:[], cartas:[], prorrogas:[], regimen:"ley23", red:redRenovacion(ini, k.renta, money("r-renta") || k.renta), pr80:false, indice:k.indice === "IPC" ? "IRAV" : k.indice, notas:`Renovación del contrato de ${k.inicio ? fdate(k.inicio) : "antes"}.` };
+      const n = { ...JSON.parse(JSON.stringify(k)), id:"c-" + uid(), estado:"vigente", firma:ini, inicio:ini, duracion:Math.max(1, parseInt(val("r-dur")) || 5), fin:"", renta:money("r-renta") || k.renta, actRef:"", ultAct:"", historial:[], docs:[], cartas:[], prorrogas:[], regimen:"ley23", red:redRenovacion(ini, k.renta, money("r-renta") || k.renta), indice:k.indice === "IPC" ? "IRAV" : k.indice, notas:`Renovación del contrato de ${k.inicio ? fdate(k.inicio) : "antes"}.` };
       db.contratos.push(n);
       toast("✓ Contrato nuevo creado. Adjunta el PDF firmado.");
     } else {
