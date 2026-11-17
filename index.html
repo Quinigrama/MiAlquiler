@@ -1189,6 +1189,17 @@ function cuentas(m, y){
   return { ingresos, grupos, limit, pendAnt, limDed, exceso, otros, neto, amI, amM, netoAm, redPct, redKey:rA.red, redMixto:rA.mixto, reduccion, netoRed:netoAm - reduccion, imputacion, vacio, aparte, prorrateado, dias, tot, supuesto, n:ms.length };
 }
 
+// Buscador de apuntes en todos los años (concepto, proveedor, notas, NIF, nº de factura, nombre del documento, categoría)
+let cuQ = "";
+function buscarMovsHtml(q){
+  const t = norm(q); if (t.length < 2) return "";
+  const ws = t.split(" ");
+  const hits = db.movs.filter(x => { const h = norm([x.concepto, x.proveedor, x.notas, x.nif, x.factura, catLabel(x.tipo, x.cat), iById(x.inm)?.alias, ...(x.docs || []).map(d => d.name)].join(" ")); return ws.every(w => h.includes(w)); })
+    .sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 50);
+  if (!hits.length) return `<p class="note" style="margin-top:8px">No hay ningún apunte con «${esc(q)}». Si subiste la factura a la Bandeja y no pulsaste «Guardar», no se llegó a guardar: vuelve a subirla.</p>`;
+  return `<ul class="mini" style="margin-top:8px">${hits.map(x => `<li style="align-items:flex-start"><div class="grow" style="white-space:normal"><div><b>${esc(x.concepto || catLabel(x.tipo, x.cat))}</b>${x.docs?.length ? " 📎" : ""}</div><div class="sub">${fdate(x.fecha)} · ${esc(iById(x.inm)?.alias || "")} · ${esc(catLabel(x.tipo, x.cat))}${x.docs?.length ? " · " + x.docs.map(d => esc(d.name)).join(", ") : ""}</div></div><span class="num" style="white-space:nowrap;font-weight:600">${x.tipo === "ingreso" ? "+" : "−"}${eur(x.importe)}</span><button type="button" class="ghost" data-mov="${x.id}" aria-label="Abrir">✎</button></li>`).join("")}</ul>`;
+}
+document.addEventListener("input", e => { if (e.target.id === "cuQ"){ cuQ = e.target.value; const r = $("cuRes"); if (r) r.innerHTML = buscarMovsHtml(cuQ); } });
 function renderCuentas(){
   const years = new Set(db.movs.map(x => +x.fecha?.slice(0, 4)).filter(Boolean)); years.add(new Date().getFullYear()); years.add(curYear); years.add(new Date().getFullYear() - 1);
   const ys = [...years].sort((a, b) => b - a);
@@ -1199,7 +1210,9 @@ function renderCuentas(){
     <div class="fields" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
       <label class="field">Año<select id="cuYear">${ys.map(y => `<option value="${y}"${y === curYear ? " selected" : ""}>${y}</option>`).join("")}</select></label>
       <label class="field">Inmueble<select id="cuInm"><option value="todos">Todos</option>${db.inmuebles.map(m => `<option value="${m.id}"${m.id === curInm ? " selected" : ""}>${esc(m.alias)}</option>`).join("")}</select></label>
-    </div>`;
+    </div>
+    <label class="field" style="margin-top:10px">Buscar en todos los años<input type="search" id="cuQ" placeholder="🔎 horno, fontanero, nombre de la factura…" autocomplete="off" value="${esc(cuQ)}"></label>
+    <div id="cuRes">${buscarMovsHtml(cuQ)}</div>`;
   // Resumen por inmueble
   const tot = { ing:0, ded:0, neto:0 };
   h += `<div class="cards">` + inms.map(m => {
