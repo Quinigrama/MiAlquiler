@@ -428,7 +428,7 @@ function normalize(d){
   d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
   for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; c.cartas ||= []; c.prorrogas ||= []; }
-  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.reglasBanco ||= []; d.archivo ||= []; d.bienes ||= [];
+  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.reglasBanco = (d.reglasBanco || []).filter(r => !(r.texto === "LAS PEDRONERAS 10" && r.cat === "ibi")); // esa regla cogía también los recibos de comunidad d.archivo ||= []; d.bienes ||= [];
   for (const m of d.inmuebles){ m.accesorios ||= []; m.docs ||= []; if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true }; }
   for (const x of d.movs) x.docs ||= [];
   return d;
@@ -2144,20 +2144,25 @@ function tableCols(tab){
   let cTxt = ci(/concepto|descrip|detalle/, [cF]); if (cTxt < 0) cTxt = ci(/movimiento|operaci|tipo/, [cF, cAmt]);
   if (cAmt < 0 && cAbono < 0 && cCargo < 0) return null;
   const extra = h.map((c, i) => i).filter(i => /observ|m[aá]s datos|referencia|beneficiario|ordenante|remitente/.test(h[i]) && i !== cTxt);
-  return { hi, cF, cAmt, cAbono, cCargo, cTxt, extra };
+  // Lista de recibos domiciliados («Últimos recibos» de La Caixa): los importes vienen en positivo, pero son cargos
+  const cEmisor = h.findIndex(c => /^emisor/.test(c));
+  const recibos = cSaldo < 0 && cAbono < 0 && cCargo < 0 && (cEmisor >= 0 || /recibos/i.test(tab.slice(Math.max(0, hi - 5), hi).flat().join(" ")));
+  if (cEmisor >= 0 && cEmisor !== cTxt) extra.unshift(cEmisor);
+  return { hi, cF, cAmt, cAbono, cCargo, cTxt, extra, recibos };
 }
 // Cada hoja por su lado. Si varias hojas traen el mismo movimiento (por ejemplo, hojas de resumen copiadas del extracto),
 // cuenta una sola vez; dos movimientos iguales dentro de la misma hoja sí se mantienen
 function movsFromSheets(sheets, defY){
   const out = [], visto = new Map();
-  for (const t of sheets){
+  sheets.forEach((t, hoja) => {
     const ms = movsFromTable(t, defY) || [], aqui = new Map();
     for (const m of ms){
+      m.hoja = hoja;
       const k = m.fecha + "|" + m.importe.toFixed(2) + "|" + norm(m.concepto).slice(0, 24);
       const n = (aqui.get(k) || 0) + 1; aqui.set(k, n);
       if (n > (visto.get(k) || 0)){ visto.set(k, n); out.push(m); }
     }
-  }
+  });
   return out;
 }
 function movsFromTable(tab, defY){
@@ -2169,6 +2174,7 @@ function movsFromTable(tab, defY){
     if (c.cAmt >= 0) imp = parseAny(r[c.cAmt]);
     else { const a = c.cAbono >= 0 ? parseAny(r[c.cAbono]) : NaN, b = c.cCargo >= 0 ? parseAny(r[c.cCargo]) : NaN; imp = (isNaN(a) && isNaN(b)) ? NaN : (isNaN(a) ? 0 : Math.abs(a)) - (isNaN(b) ? 0 : Math.abs(b)); }
     if (isNaN(imp) || !imp) continue;
+    if (c.recibos) imp = -Math.abs(imp);
     const con = [c.cTxt >= 0 ? r[c.cTxt] : cleanConcept(r.join(" ")), ...c.extra.map(i => r[i])].map(x => String(x || "").trim()).filter(Boolean).join(" · ");
     out.push({ fecha, concepto:con.slice(0, 160) || "Movimiento", importe:imp });
   }
@@ -2326,7 +2332,9 @@ function dupFind(p, days){
   const d0 = toDate(p.fecha); if (!d0 || !p.importe) return null;
   const near = o => o.inm === p.inm && o.tipo === p.tipo && Math.abs((+o.importe || 0) - p.importe) < 0.005 && o.fecha && Math.abs(toDate(o.fecha) - d0) <= days * 86400000;
   const inDb = db.movs.find(near); if (inDb) return { where:"db", id:inDb.id, x:inDb };
-  const inB = bandeja.find(o => o.pid !== p.pid && o.accion === "nuevo" && near(o)); if (inB) return { where:"lote", id:inB.pid, x:inB };
+  // Dos movimientos iguales en la misma hoja del mismo extracto son dos movimientos de verdad (dos meses pagados el mismo día)
+  const misma = o => o.origen === "extracto" && p.origen === "extracto" && o.file && o.file === p.file && (o.hoja ?? 0) === (p.hoja ?? 0);
+  const inB = bandeja.find(o => o.pid !== p.pid && o.accion === "nuevo" && !misma(o) && near(o)); if (inB) return { where:"lote", id:inB.pid, x:inB };
   return null;
 }
 function propuesta(base){
@@ -2382,7 +2390,7 @@ async function procesar(files){
         const file = { id:"d-" + uid(), name:f.name, type:f.type, size:f.size, hash, added:todayIso(), blob:f, kind:"extracto" };
         let n = 0, rel = 0;
         for (const m of movs){
-          const p = propuesta({ origen:"extracto", file, fecha:m.fecha, concepto:m.concepto, importe:Math.round(Math.abs(m.importe) * 100) / 100, tipo:m.importe < 0 ? "gasto" : "ingreso" });
+          const p = propuesta({ origen:"extracto", file, hoja:m.hoja ?? 0, fecha:m.fecha, concepto:m.concepto, importe:Math.round(Math.abs(m.importe) * 100) / 100, tipo:m.importe < 0 ? "gasto" : "ingreso" });
           if (!p.relevante) p.incluir = false;
           bandeja.push(p); recheckDup(p); n++; if (p.relevante) rel++;
         }
@@ -2520,14 +2528,14 @@ function renderBandeja(){
   h += `<div class="panel"><div class="panel-head"><h2>🧠 Lo que he aprendido</h2></div>
     ${reglas.length ? `<ul class="mini">${reglas.map(r => `<li><span class="grow">«${esc(r.key)}» → ${esc(iById(r.inm)?.alias || "?")} · ${esc(catLabel("gasto", r.cat) || label(CATS_I, r.cat))}</span><button type="button" class="ghost danger" data-rdel="${r.id}" aria-label="Olvidar">✕</button></li>`).join("")}</ul>` : `<p class="note">Cuando guardes movimientos del banco, recordaré a qué piso y categoría van (por ejemplo, el recibo de una comunidad) para clasificarlos solos la próxima vez.</p>`}</div>`;
   const arch = db.archivo || [];
-  if (arch.length) h += `<div class="panel"><div class="panel-head"><h2>🗂️ Extractos leídos</h2></div><ul class="mini">${arch.slice().reverse().map(a => `<li><span class="grow">🏦 ${esc(a.name)}</span><span class="sub">${fdate(a.added)}</span>${a.driveId ? '<span class="chip info">Drive</span>' : ""}<button type="button" class="ghost" data-aopen="${a.id}">Abrir</button></li>`).join("")}</ul></div>`;
+  if (arch.length) h += `<div class="panel"><div class="panel-head"><h2>🗂️ Extractos leídos</h2></div><ul class="mini">${arch.slice().reverse().map(a => `<li><span class="grow">🏦 ${esc(a.name)}</span><span class="sub">${fdate(a.added)}</span>${a.driveId ? '<span class="chip info">Drive</span>' : ""}<button type="button" class="ghost" data-aopen="${a.id}">Abrir</button><button type="button" class="ghost danger" data-adel="${a.id}">Borrar sus apuntes</button></li>`).join("")}</ul><p class="note" style="margin-top:8px">«Borrar sus apuntes» quita todo lo que se guardó desde ese extracto, para volver a subirlo.</p></div>`;
   el.innerHTML = h;
 }
 // Vuelve a pasar las reglas por lo que hay en la bandeja (sin tocar lo que hayas cambiado a mano)
 function reaplicarReglas(){
   bandeja = bandeja.map(p => {
     if (p.origen !== "extracto" || "inm0" in p) return p;
-    const q = propuesta({ origen:p.origen, file:p.file, fecha:p.fecha, concepto:p.concepto, importe:p.importe, tipo:p.tipo });
+    const q = propuesta({ origen:p.origen, file:p.file, hoja:p.hoja, fecha:p.fecha, concepto:p.concepto, importe:p.importe, tipo:p.tipo });
     q.pid = p.pid; if (!q.relevante) q.incluir = false; return q;
   });
   bandeja.forEach(recheckDup);
@@ -2587,6 +2595,15 @@ document.addEventListener("click", e => {
     db.reglasBanco = (db.reglasBanco || []).filter(r => norm(r.texto) !== norm(texto));
     db.reglasBanco.push({ id:"rb-" + uid(), texto, inm:inm === "__no" ? null : inm, ignorar:inm === "__no", cat, tipo:g === "i" ? "ingreso" : "gasto" });
     reaplicarReglas(); save(); toast("✓ Regla añadida."); return;
+  }
+  const ad = e.target.closest("[data-adel]");
+  if (ad){
+    if (!ad.dataset.armed){ ad.dataset.armed = "1"; ad.textContent = "¿Seguro? Toca otra vez"; setTimeout(() => { if (ad.isConnected){ delete ad.dataset.armed; ad.textContent = "Borrar sus apuntes"; } }, 3500); return; }
+    const a = db.archivo.find(x => x.id === ad.dataset.adel); if (!a) return;
+    const antes = db.movs.length;
+    db.movs = db.movs.filter(x => !(x.origen === "extracto" && x.fuente === a.name));
+    db.archivo = db.archivo.filter(x => x.id !== a.id); IDB.del(a.id).catch(() => {});
+    save(); toast(`✓ ${antes - db.movs.length} apuntes de «${a.name}» borrados. Ya puedes volver a subirlo.`); return;
   }
   const ao = e.target.closest("[data-aopen]"); if (ao){ openDoc(db.archivo.find(a => a.id === ao.dataset.aopen)); return; }
 });
