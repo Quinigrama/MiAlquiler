@@ -382,7 +382,7 @@ function seed(){
     firma:"", inicio:"", duracion:5, fin:"", renta:null, diaPago:"", indice:"IPC", actRef:"", ultAct:"", fijo:null, historial:[],
     fianza:{ importe:null, org:"", fecha:"", ref:"" }, regimen:"lau19", habitual:true, red:"0.6", docs:[], notas:"", ...extra });
   return {
-    app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{}, reglas:[], archivo:[], bienes:[],
+    app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{}, reglas:[], reglasBanco:[], archivo:[], bienes:[],
     titulares:[{ id:tp, nombre:"Padre", nif:"", rel:"Padre" }, { id:tm, nombre:"Madre", nif:"", rel:"Madre" }],
     declaracion:{ tipo:"conjunta", miembros:[tp, tm] },
     inmuebles:[
@@ -412,7 +412,7 @@ const saveUsers = () => { try { localStorage.setItem(UKEY, JSON.stringify(users)
 const curUser = () => users.list.find(u => u.id === users.cur) || users.list[0];
 function emptyData(name){
   const t = "t-" + uid();
-  return { app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{}, reglas:[], archivo:[], bienes:[],
+  return { app:"miAlquiler", v:1, seed:true, updated:0, movs:[], arrastres:{}, reglas:[], reglasBanco:[], archivo:[], bienes:[],
     titulares:[{ id:t, nombre:name || "Titular", nif:"", rel:"" }], declaracion:{ tipo:"individual", miembros:[t] }, inmuebles:[], contratos:[] };
 }
 function loadUserData(id){
@@ -428,7 +428,7 @@ function normalize(d){
   d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
   for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; c.cartas ||= []; c.prorrogas ||= []; }
-  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.archivo ||= []; d.bienes ||= [];
+  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.reglasBanco ||= []; d.archivo ||= []; d.bienes ||= [];
   for (const m of d.inmuebles){ m.accesorios ||= []; m.docs ||= []; if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true }; }
   for (const x of d.movs) x.docs ||= [];
   return d;
@@ -2103,6 +2103,20 @@ function tableCols(tab){
   const extra = h.map((c, i) => i).filter(i => /observ|m[aá]s datos|referencia|beneficiario|ordenante|remitente/.test(h[i]) && i !== cTxt);
   return { hi, cF, cAmt, cAbono, cCargo, cTxt, extra };
 }
+// Cada hoja por su lado. Si varias hojas traen el mismo movimiento (por ejemplo, hojas de resumen copiadas del extracto),
+// cuenta una sola vez; dos movimientos iguales dentro de la misma hoja sí se mantienen
+function movsFromSheets(sheets, defY){
+  const out = [], visto = new Map();
+  for (const t of sheets){
+    const ms = movsFromTable(t, defY) || [], aqui = new Map();
+    for (const m of ms){
+      const k = m.fecha + "|" + m.importe.toFixed(2) + "|" + norm(m.concepto).slice(0, 24);
+      const n = (aqui.get(k) || 0) + 1; aqui.set(k, n);
+      if (n > (visto.get(k) || 0)){ visto.set(k, n); out.push(m); }
+    }
+  }
+  return out;
+}
 function movsFromTable(tab, defY){
   const c = tableCols(tab); if (!c) return null;
   const out = [];
@@ -2133,9 +2147,9 @@ async function readFile(f){
       try { txt = new TextDecoder("utf-8", { fatal:true }).decode(buf); } catch(e){ txt = new TextDecoder("windows-1252").decode(buf); }
       wb = XLSX.read(txt, { type:"string", raw:true });
     } else wb = XLSX.read(await f.arrayBuffer(), { type:"array", cellDates:true, dateNF:"dd/mm/yyyy" });
-    const table = [];
-    wb.SheetNames.forEach(n => table.push(...XLSX.utils.sheet_to_json(wb.Sheets[n], { header:1, raw:false, defval:"", dateNF:"dd/mm/yyyy" })));
-    return { kind:"sheet", table, lines:table.map(r => r.join("  ")) };
+    const sheets = wb.SheetNames.map(n => XLSX.utils.sheet_to_json(wb.Sheets[n], { header:1, raw:false, defval:"", dateNF:"dd/mm/yyyy" })).filter(t => t.length);
+    const table = sheets.flat();
+    return { kind:"sheet", table, sheets, lines:table.map(r => r.join("  ")) };
   }
   if (/^image\//.test(f.type)) return { kind:"image", lines:[] };
   throw new Error("formato no admitido (usa PDF, Excel, CSV o una foto)");
@@ -2146,7 +2160,7 @@ const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ
 const KW = [
   ["ibi", /\bibi\b|\bi b i\b|bienes inmuebles|contribucion urbana|impuesto sobre bienes|gestrisam|recaudacion (municipal|ejecutiva)|agencia tributaria madrid|suma gestion tributaria|ayuntamiento/],
   ["tasas", /basura|residuos|tasa de paso|\bvado\b|tasa recogida/],
-  ["comunidad", /comunidad|\bcdad\b|\bcmdad\b|\bccpp\b|cuota comunid|propietarios|administracion de fincas|admon fincas|adm fincas/],
+  ["comunidad", /comunidad|\bcdad\b|\bcmdad\b|\bccpp\b|cuota comunid|propietarios|administracion de fincas|admon fincas|adm fincas|recibo de fincas|\bcom prop\b|^c ?p [a-z]/],
   ["seguro", /seguro|poliza|mapfre|\baxa\b|allianz|mutua|generali|ocaso|santalucia|santa lucia|\breale\b|linea directa|zurich|\bcaser\b|liberty|catalana occidente|segurcaixa|helvetia|pelayo|\bfiatc\b|plus ultra/],
   ["intereses", /intereses? (del? )?(prestamo|hipoteca)|liquidacion (de )?(prestamo|hipoteca)|cuota (de )?(prestamo|hipoteca)/],
   ["suministros", /iberdrola|endesa|naturgy|holaluz|totalenergies|canal de isabel|\bemasa\b|aguas de|electricidad|gas natural|\bluz\b|suministro/],
@@ -2165,7 +2179,14 @@ function detectCat(txt, tipo){
   for (const [k, re] of KW) if (re.test(t)) return k;
   return null;
 }
-function ruleKey(concepto){ return norm(concepto).split(" ").filter(w => w.length >= 3 && !/\d/.test(w) && !STOP.has(w)).slice(0, 4).join(" "); }
+const STOP_REGLA = new Set(["inmediata","concepto","del","las","los","por","para","con"]);
+function ruleKey(concepto){ return norm(concepto).split(" ").filter(w => w.length >= 3 && !/\d/.test(w) && !STOP.has(w) && !STOP_REGLA.has(w)).slice(0, 4).join(" "); }
+// Reglas que escribes tú: si el concepto contiene un texto, va a tal piso y categoría (o no se declara)
+function reglaManual(txt, tipo){
+  const t = " " + norm(txt) + " ";
+  return (db.reglasBanco || []).filter(r => r.texto && (!r.tipo || r.tipo === tipo) && t.includes(" " + norm(r.texto) + " "))
+    .sort((a, b) => norm(b.texto).length - norm(a.texto).length)[0] || null;
+}
 // Regla aprendida para un concepto. Si el mismo concepto va a pisos distintos (dos IBI del mismo ayuntamiento),
 // decide el importe más parecido; si no se parece ninguno, no se arriesga
 function ruleFor(txt, importe){
@@ -2179,13 +2200,15 @@ function ruleFor(txt, importe){
 }
 function detectInm(txt){
   const t = norm(txt), tt = " " + t + " ", raw = String(txt).toUpperCase().replace(/\s/g, "");
+  const tw = t.split(" ").filter(x => x.length >= 6);
+  const has = w => tt.includes(" " + w + " ") || (w.length >= 7 && tw.some(x => x.length < w.length && w.startsWith(x)));
   const scores = db.inmuebles.map(m => {
     let s = 0, why = "";
     const rc = (m.rc || "").toUpperCase();
     if (rc && raw.includes(rc)){ s += 100; why = "referencia catastral"; }
     else if (rc.length >= 14 && raw.includes(rc.slice(0, 14))){ s += 60; why = "referencia catastral"; }
     const dir = words(m.direccion), al = words(m.alias);
-    const hitD = dir.filter(w => tt.includes(" " + w + " ")).length, hitA = al.filter(w => tt.includes(" " + w + " ")).length;
+    const hitD = dir.filter(has).length, hitA = al.filter(has).length;
     if (hitD){ s += 15 * hitD; why ||= "dirección"; }
     if (hitA){ s += 12 * hitA; why ||= "nombre del piso"; }
     if (m.cp && new RegExp("\\b" + m.cp + "\\b").test(t)){ s += 8; why ||= "código postal"; }
@@ -2266,15 +2289,31 @@ function dupFind(p, days){
 function propuesta(base){
   const p = { pid:pid(), incluir:true, accion:"nuevo", nif:"", factura:"", ...base };
   const txt = [p.concepto, p.texto || ""].join(" ");
+  const man = p.origen === "extracto" ? reglaManual(p.concepto, p.tipo) : null;
+  if (man){
+    p.inm = man.inm || null; p.cat = man.cat || (p.tipo === "ingreso" ? "renta" : "otros"); p.por = "tu regla «" + man.texto + "»"; p.relevante = true;
+    if (man.ignorar){ p.incluir = false; p.ignorada = true; p.por = "tu regla «" + man.texto + "»: no se declara"; }
+    return ibiCuota(p);
+  }
   const regla = ruleFor(p.concepto, p.importe);
   if (regla){ p.inm = regla.inm; p.cat = regla.cat; p.por = "regla aprendida"; }
   else {
     const di = detectInm(txt); p.inm = di.inm; p.por = di.why;
     p.cat = detectCat(txt, p.tipo);
   }
-  p.relevante = !!(regla || p.cat && (p.tipo === "gasto" || p.inm) || (p.tipo === "ingreso" && (p.inm || RENTA_KW.test(norm(txt)))));
-  p.cat ||= p.tipo === "ingreso" ? "renta" : "otros";
   if (!p.inm && db.inmuebles.length === 1) p.inm = db.inmuebles[0].id;
+  // De un extracto solo marco lo que sé de qué piso es: en una cuenta personal hay muchos recibos de casa que no son de los pisos
+  p.relevante = p.origen === "extracto" ? !!(regla || p.inm && (p.cat || p.tipo === "ingreso"))
+    : !!(regla || p.cat && (p.tipo === "gasto" || p.inm) || (p.tipo === "ingreso" && (p.inm || RENTA_KW.test(norm(txt)))));
+  p.cat ||= p.tipo === "ingreso" ? "renta" : "otros";
+  return ibiCuota(p);
+}
+// IBI de Madrid con pagos a cuenta (PAC): el recibo de diciembre trae «Pagado a cuenta: X Cuota: Y». El gasto del año es la cuota entera,
+// y los pagos a cuenta de enero y julio (que pueden juntar varios pisos) no se apuntan aparte
+function ibiCuota(p){
+  if (p.origen !== "extracto" || p.cat !== "ibi" || !p.inm) return p;
+  const m = String(p.concepto).match(/pagado a cuenta:?\s*([\d.]+,\d{2}).*?cuota:?\s*([\d.]+,\d{2})/i);
+  if (m){ const cuota = parseAny(m[2]); if (cuota > p.importe){ p.cargado = p.importe; p.importe = cuota; p.concepto = `IBI: cuota del año ${eur(cuota)} (${eur(parseAny(m[1]))} pagados a cuenta y ${eur(p.cargado)} en este recibo) · ` + p.concepto; } }
   return p;
 }
 function recheckDup(p){
@@ -2295,7 +2334,7 @@ async function procesar(files){
       const joined = r.lines.join(" "), defY = fileYear(joined);
       if (esCertIndice(joined)){ msgs.push(await importarCertIndice(joined, f, hash)); continue; }
       if (esFicha(joined)){ const ok = await importarFichas(r.kind === "pdf" ? { items:await pdfXY(await f.arrayBuffer()) } : { table:r.table || [] }, f.name); msgs.push(ok ? `${f.name}: es la hoja de fichas de las viviendas; revisa a dónde va cada columna.` : `${f.name}: parece la hoja de fichas, pero no he sabido leerla.`); continue; }
-      const movs = r.kind === "sheet" ? movsFromTable(r.table, defY) || [] : r.kind === "pdf" ? movsFromItems(r.items, defY) : [];
+      const movs = r.kind === "sheet" ? movsFromSheets(r.sheets || [r.table], defY) : r.kind === "pdf" ? movsFromItems(r.items, defY) : [];
       if (movs.length >= 3){
         const file = { id:"d-" + uid(), name:f.name, type:f.type, size:f.size, hash, added:todayIso(), blob:f, kind:"extracto" };
         let n = 0, rel = 0;
@@ -2421,6 +2460,17 @@ function renderBandeja(){
       ${otros.length ? `<details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Otros movimientos del extracto (${otros.length})</summary><p class="note" style="margin:8px 0">No parecen de los pisos. Marca los que sí lo sean.</p><div style="display:grid;gap:8px">${otros.map(card).join("")}</div></details>` : ""}
     </div>`;
   }
+  const rb = db.reglasBanco || [];
+  const destino = r => r.ignorar ? "🚫 no se declara" : `${esc(iById(r.inm)?.alias || "⚠️ elige el piso")} · ${esc(catLabel(r.tipo || "gasto", r.cat))}`;
+  h += `<div class="panel"><div class="panel-head"><h2>📏 Tus reglas del banco</h2><div class="toolbar"><button type="button" class="ghost" id="rbLoad">📂 Cargar reglas</button><input type="file" id="rbFile" accept=".json,application/json" hidden></div></div>
+    <p class="note" style="margin-bottom:10px">Si el concepto del movimiento contiene el texto, va a ese piso y categoría. Mandan sobre todo lo demás.</p>
+    ${rb.length ? `<ul class="mini" style="margin-bottom:12px">${rb.map(r => `<li><span class="grow" style="white-space:normal;overflow-wrap:anywhere">«${esc(r.texto)}»${r.tipo ? ` <span class="sub">(${r.tipo === "ingreso" ? "ingresos" : "gastos"})</span>` : ""} → ${destino(r)}</span><button type="button" class="ghost danger" data-rbdel="${r.id}" aria-label="Quitar regla">✕</button></li>`).join("")}</ul>` : ""}
+    <div class="fields bj">
+      <label class="field">Si el concepto contiene<input type="text" id="rbTxt" placeholder="p. ej. PLAYA DE PONIENTE"></label>
+      <label class="field">Piso<select id="rbInm"><option value="">— Elige —</option>${db.inmuebles.map(m => `<option value="${m.id}">${esc(m.alias)}</option>`).join("")}<option value="__no">🚫 No se declara</option></select></label>
+      <label class="field">Categoría<select id="rbCat"><optgroup label="Gastos">${CATS_G.map(([k, l]) => `<option value="g:${k}">${esc(l)}</option>`).join("")}</optgroup><optgroup label="Ingresos">${CATS_I.map(([k, l]) => `<option value="i:${k}">${esc(l)}</option>`).join("")}</optgroup></select></label>
+    </div>
+    <div class="toolbar" style="margin-top:8px"><button type="button" class="primary" id="rbAdd">Añadir regla</button></div></div>`;
   const reglas = db.reglas || [];
   h += `<div class="panel"><div class="panel-head"><h2>🧠 Lo que he aprendido</h2></div>
     ${reglas.length ? `<ul class="mini">${reglas.map(r => `<li><span class="grow">«${esc(r.key)}» → ${esc(iById(r.inm)?.alias || "?")} · ${esc(catLabel("gasto", r.cat) || label(CATS_I, r.cat))}</span><button type="button" class="ghost danger" data-rdel="${r.id}" aria-label="Olvidar">✕</button></li>`).join("")}</ul>` : `<p class="note">Cuando guardes movimientos del banco, recordaré a qué piso y categoría van (por ejemplo, el recibo de una comunidad) para clasificarlos solos la próxima vez.</p>`}</div>`;
@@ -2428,9 +2478,44 @@ function renderBandeja(){
   if (arch.length) h += `<div class="panel"><div class="panel-head"><h2>🗂️ Extractos leídos</h2></div><ul class="mini">${arch.slice().reverse().map(a => `<li><span class="grow">🏦 ${esc(a.name)}</span><span class="sub">${fdate(a.added)}</span>${a.driveId ? '<span class="chip info">Drive</span>' : ""}<button type="button" class="ghost" data-aopen="${a.id}">Abrir</button></li>`).join("")}</ul></div>`;
   el.innerHTML = h;
 }
+// Vuelve a pasar las reglas por lo que hay en la bandeja (sin tocar lo que hayas cambiado a mano)
+function reaplicarReglas(){
+  bandeja = bandeja.map(p => {
+    if (p.origen !== "extracto" || "inm0" in p) return p;
+    const q = propuesta({ origen:p.origen, file:p.file, fecha:p.fecha, concepto:p.concepto, importe:p.importe, tipo:p.tipo });
+    q.pid = p.pid; if (!q.relevante) q.incluir = false; return q;
+  });
+  bandeja.forEach(recheckDup);
+}
+// Piso a partir de palabras de su nombre o dirección (para las reglas que vienen en un archivo)
+function pisoPorTexto(claves){
+  for (const k of [].concat(claves || [])){
+    const nk = norm(k); if (!nk) continue;
+    const c = db.inmuebles.filter(m => (" " + norm([m.alias, m.direccion, m.cp, m.municipio].join(" ")) + " ").includes(" " + nk + " "));
+    const v = c.filter(m => m.tipo === "vivienda"), pick = v.length === 1 ? v[0] : c.length === 1 ? c[0] : null;
+    if (pick) return pick.id;
+  }
+  return null;
+}
+async function cargarReglas(f){
+  let d; try { d = JSON.parse(await f.text()); } catch(e){ d = null; }
+  if (!d || d.app !== "miAlquiler-reglas" || !Array.isArray(d.reglas)){ toast("Ese archivo no es de reglas de Mi Alquiler."); return; }
+  db.reglasBanco ||= []; let n = 0, sin = 0;
+  for (const r of d.reglas){
+    if (!r.texto) continue;
+    const inm = r.ignorar ? null : pisoPorTexto(r.piso);
+    if (!r.ignorar && !inm) sin++;
+    db.reglasBanco = db.reglasBanco.filter(x => norm(x.texto) !== norm(r.texto));
+    db.reglasBanco.push({ id:"rb-" + uid(), texto:r.texto, inm, ignorar:!!r.ignorar, cat:r.cat || (r.tipo === "ingreso" ? "renta" : "otros"), tipo:r.tipo || "gasto" });
+    n++;
+  }
+  reaplicarReglas(); save();
+  toast(`✓ ${n} ${plural(n, "regla cargada", "reglas cargadas")}${sin ? `. En ${sin} no sé el piso: quítala y añádela eligiéndolo` : ""}.`);
+}
 // Eventos de la bandeja
 document.addEventListener("change", e => {
   if (e.target.id === "bjFile"){ const fs = [...e.target.files]; e.target.value = ""; if (fs.length) procesar(fs); return; }
+  if (e.target.id === "rbFile"){ const f = e.target.files[0]; e.target.value = ""; if (f) cargarReglas(f); return; }
   const row = e.target.closest("#v-bandeja [data-p]"); if (!row) return;
   const p = bandeja.find(x => x.pid === row.dataset.p), k = e.target.dataset.pf; if (!p || !k) return;
   if (!("inm0" in p)){ p.inm0 = p.inm; p.cat0 = p.cat; }
@@ -2448,6 +2533,16 @@ document.addEventListener("click", e => {
   if (e.target.closest("#bjSave")) return guardarBandeja();
   if (e.target.closest("#bjClear")){ bandeja = []; bandejaMsg = ""; renderBandeja(); return; }
   const rd = e.target.closest("[data-rdel]"); if (rd){ db.reglas = db.reglas.filter(r => r.id !== rd.dataset.rdel); save(); return; }
+  const rbd = e.target.closest("[data-rbdel]"); if (rbd){ db.reglasBanco = db.reglasBanco.filter(r => r.id !== rbd.dataset.rbdel); reaplicarReglas(); save(); return; }
+  if (e.target.closest("#rbLoad")){ $("rbFile").click(); return; }
+  if (e.target.closest("#rbAdd")){
+    const texto = $("rbTxt").value.trim(), inm = $("rbInm").value, [g, cat] = $("rbCat").value.split(":");
+    if (norm(texto).length < 3){ toast("Escribe un texto del concepto (al menos 3 letras)."); return; }
+    if (!inm){ toast("Elige el piso, o «No se declara»."); return; }
+    db.reglasBanco = (db.reglasBanco || []).filter(r => norm(r.texto) !== norm(texto));
+    db.reglasBanco.push({ id:"rb-" + uid(), texto, inm:inm === "__no" ? null : inm, ignorar:inm === "__no", cat, tipo:g === "i" ? "ingreso" : "gasto" });
+    reaplicarReglas(); save(); toast("✓ Regla añadida."); return;
+  }
   const ao = e.target.closest("[data-aopen]"); if (ao){ openDoc(db.archivo.find(a => a.id === ao.dataset.aopen)); return; }
 });
 ["dragover", "dragenter"].forEach(ev => document.addEventListener(ev, e => { const z = e.target.closest?.("#dropZone"); if (z){ e.preventDefault(); z.style.borderColor = "var(--accent)"; } }));
