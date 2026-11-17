@@ -2581,6 +2581,7 @@ async function procesar(files){
       const r = await readFile(f);
       const joined = r.lines.join(" "), defY = fileYear(joined);
       if (esCertIndice(joined)){ msgs.push(await importarCertIndice(joined, f, hash)); continue; }
+      if (esFichaSuelta(r.lines)){ fichaSuelta(r.lines, f.name); msgs.push(`${f.name}: es la ficha de un inmueble; elige a dónde va.`); continue; }
       if (esFicha(joined)){ const ok = await importarFichas(r.kind === "pdf" ? { items:await pdfXY(await f.arrayBuffer()) } : { table:r.table || [] }, f.name); msgs.push(ok ? `${f.name}: es la hoja de fichas de las viviendas; revisa a dónde va cada columna.` : `${f.name}: parece la hoja de fichas, pero no he sabido leerla.`); continue; }
       const movs = r.kind === "sheet" ? movsFromSheets(r.sheets || [r.table], defY) : r.kind === "pdf" ? movsFromItems(r.items, defY) : [];
       if (movs.length >= 3){
@@ -2822,6 +2823,61 @@ const FICHA = [
   ["ipc", /subida|ipc|actualizacion/], ["renta", /renta|alquiler mensual|mensualidad/], ["notas", /notas|observaciones/]
 ];
 const fichaCampo = lab => { const t = norm(lab); if (!t) return null; for (const [k, re] of FICHA) if (re.test(t)) return k; return null; };
+// Ficha suelta de un inmueble (una hoja por inmueble, con columnas «100 %» y «% del titular»): «RENTA 2024», referencia catastral,
+// base liquidable / valor catastral, días a disposición, renta inmobiliaria imputada…
+// Referencia catastral aunque lleve pegados los 4 dígitos del cargo (…QD0066)
+const RE_RC_SUELTA = /\b([0-9A-Z]{7}[A-Z]{2}[0-9A-Z]{5}[0-9A-Z]{4}[A-Z]{2})(?:\d{4})?\b/g;
+const esFichaSuelta = lines => { const t = norm(lines.join(" ")); return new Set([...lines.join(" ").toUpperCase().matchAll(RE_RC_SUELTA)].map(m => m[1])).size === 1 && /referencia/.test(t) && /catastral/.test(t) && /renta inmobiliaria|base liquidable|dias a disposicion|valor de compra/.test(t); };
+function leerFichaSuelta(lines){
+  const L = lines.map(l => String(l).trim()).filter(Boolean), T = L.join("\n");
+  const money = l => [...String(l || "").matchAll(/-?[\d.]+,\d{2}\s*€?/g)].map(m => parseAny(m[0].replace("€", ""))).filter(v => !isNaN(v));
+  const tras = (re, n = 3) => { const i = L.findIndex(l => re.test(l)); if (i < 0) return []; for (let k = i; k <= Math.min(L.length - 1, i + n); k++){ const v = money(L[k]); if (v.length) return v; } return []; };
+  const iRC = L.findIndex(l => /^referencia/i.test(l));
+  const dir = L.slice(0, iRC < 0 ? 3 : iRC).join(" ").replace(/RENTA\s+20\d{2}/i, "").replace(/\d+(,\d+)?\s*%/g, "").replace(/\s+/g, " ").trim();
+  const pcts = [...T.matchAll(/(\d{1,3}(?:,\d+)?)\s*%/g)].map(m => parseAny(m[1])).filter(v => v > 0 && v <= 100);
+  const dias = (T.match(/d[ií]as a disposici[oó]n[\s\S]{0,40}?\b(\d{1,3})\b/i) || [])[1];
+  const fa = (T.match(/fecha de adquisici[oó]n\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i) || [])[1];
+  return {
+    nombre:dir, anio:+((T.match(/RENTA\s+(20\d{2})/i) || [])[1] || 0) || null,
+    rc:([...T.toUpperCase().matchAll(RE_RC_SUELTA)][0] || [, ""])[1],
+    pct:pcts.find(v => v < 100) ?? 100,
+    vc:tras(/base liquidable|valor catastral\)?$|^valor catastral$/i)[0] || null,
+    suelo:tras(/catastral del suelo/i, 1)[0] || null, constr:tras(/valor de construcci/i, 1)[0] || null,
+    vcompra:tras(/^valor de compra/i, 0)[0] || null, gcompra:tras(/^gastos de compra/i, 0)[0] || null, fcompra:fa ? getDateIso(fa) : "",
+    dias:dias ? +dias : null, revisado:!/revisado\s*(\(si\/no\))?\s*\n?\s*no\b/i.test(T), imputada:tras(/renta inmobiliaria/i)[0] || null,
+    vendido:/fecha de transmisi[oó]n\s*:?\s*\d/i.test(T)
+  };
+}
+function fichaSuelta(lines, nombreArchivo){
+  const f = leerFichaSuelta(lines);
+  const ya = f.rc && db.inmuebles.find(m => m.rc === f.rc);
+  const sugerido = ya ? ya.id : (() => { let b = null, bs = 0; for (const m of db.inmuebles){ const s = parecido(f.nombre, m.alias + " " + (m.direccion || "")); if (s > bs){ bs = s; b = m; } } return bs >= 2 ? b.id : "nuevo"; })();
+  const datos = [f.rc && `Referencia catastral ${f.rc}`, f.vc && `valor catastral ${eur(f.vc)}`, f.constr && `construcción ${eur(f.constr)}`, f.vcompra && `compra ${eur(f.vcompra)}`,
+    f.dias != null && `${f.dias} días a disposición`, f.imputada && `renta imputada ${eur(f.imputada)} (al 100 %)`, `valor catastral ${f.revisado ? "revisado" : "sin revisar"}`].filter(Boolean).join(" · ");
+  openDlg("Ficha de un inmueble", `<p class="note">He leído «${esc(nombreArchivo)}»${f.anio ? ` (Renta ${f.anio})` : ""}:</p>
+    <fieldset><legend>${esc(f.nombre || "Inmueble")}</legend><p class="note">${esc(datos)}</p>
+      <div class="chips"><span class="chip acc">Participación ${fmt(f.pct, f.pct % 1 ? 2 : 0)} %</span>${f.dias >= 365 ? '<span class="chip warn">Vacío todo el año: imputación de rentas</span>' : ""}</div></fieldset>
+    <label class="field">Va a<select id="fs-dest"><option value="nuevo"${sugerido === "nuevo" ? " selected" : ""}>Inmueble nuevo</option>${db.inmuebles.map(m => `<option value="${m.id}"${m.id === sugerido ? " selected" : ""}>${esc(m.alias)}</option>`).join("")}</select></label>
+    <label class="field">¿De quién es el ${fmt(f.pct, f.pct % 1 ? 2 : 0)} %?<select id="fs-tit">${db.titulares.map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join("")}${db.declaracion?.tipo === "conjunta" && db.titulares.length > 1 ? `<option value="__todos">Repartido entre todos los titulares</option>` : ""}</select></label>
+    <p class="note">Si el inmueble no está alquilado, en la pestaña Renta te saldrá la imputación de rentas de cada titular según su parte.</p>`, () => {
+    const d = val("fs-dest"), tsel = val("fs-tit");
+    let m = d === "nuevo" ? null : iById(d);
+    if (!m){
+      const alias = (f.nombre || "Inmueble").replace(/\b(MADRID|MALAGA|MÁLAGA)\b/gi, "").replace(/^(CL|C\/|CALLE|AV|AVDA)\.?\s+/i, "").replace(/\b0+(\d)/g, "$1").replace(/\s+/g, " ").trim();
+      m = { id:"i-" + uid(), alias:alias.replace(/\b\w/g, c => c.toUpperCase()).replace(/\B\w/g, c => c.toLowerCase()), tipo:"vivienda", direccion:f.nombre, cp:"", municipio:/madrid/i.test(f.nombre) ? "Madrid" : /malaga|málaga/i.test(f.nombre) ? "Málaga" : "", provincia:"", rc:"", situacion:"disposicion", tit:[], adq:{ forma:"compra" }, cat:{ revisado:true }, notas:"", accesorios:[] };
+      m.provincia = m.municipio; db.inmuebles.push(m);
+    }
+    if (f.rc) m.rc = f.rc;
+    m.cat ||= {}; if (f.vc) m.cat.total = f.vc; if (f.constr) m.cat.constr = f.constr; m.cat.revisado = f.revisado;
+    m.adq ||= {}; if (f.vcompra) m.adq.precio = f.vcompra; if (f.gcompra) m.adq.gastos = f.gcompra; if (f.fcompra) m.adq.fecha = f.fcompra;
+    if (f.dias >= 365 && !ctsOf(m).some(c => c.estado === "vigente")) m.situacion = "disposicion";
+    if (tsel === "__todos"){ const ts = db.titulares; m.tit = ts.map(t => ({ t:t.id, pct:Math.round(f.pct / ts.length * 100) / 100, reg:"ganancial" })); }
+    else m.tit = [{ t:tsel, pct:f.pct, reg:"privativo" }];
+    save(); toast(`✓ ${m.alias}: ficha importada (${fmt(f.pct, f.pct % 1 ? 2 : 0)} %).`);
+  });
+  $("dlgSave").textContent = "Importar";
+  $("dlg").addEventListener("close", () => $("dlgSave").textContent = "Guardar", { once:true });
+}
 const esFicha = txt => { const t = norm(txt); return (String(txt).match(new RegExp(RE_RC.source, "g")) || []).length >= 2 && /referencia catastral/.test(t) && /valor catastral|fecha compra|renta actual|nif inquilino/.test(t); };
 
 // PDF con posiciones (x, y) para leer la tabla por columnas
