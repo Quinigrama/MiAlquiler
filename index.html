@@ -637,7 +637,7 @@ function renderInmuebles(){
         <dt>Construcción</dt><dd class="num">${m.cat.constr ? eur(m.cat.constr) : "—"}</dd>
         <dt>Adquisición</dt><dd>${esc(label(ADQ, m.adq.forma))}${m.adq.fecha ? " · " + fdate(m.adq.fecha) : ""}</dd>
         <dt>Amortización 3 %</dt><dd class="num">${am ? eur(am.anual) + "/año" : "—"}</dd>
-        <dt>Índice de referencia</dt><dd class="num">${m.indice?.max ? `${eur(m.indice.min)}–${eur(m.indice.max)}${(() => { const c = vigente(m); return c?.renta ? (c.renta <= m.indice.max ? ' <span class="chip ok">Por debajo</span>' : ' <span class="chip bad">Por encima</span>') : ""; })()}` : "—"}</dd>
+        <dt>Índice de referencia</dt><dd class="num">${m.indice?.max ? `${eur(m.indice.min)}–${eur(m.indice.max)}${(() => { const c = vigente(m); return !c ? ' <span class="chip warn">Sin contrato vigente</span>' : !(c.renta > 0) ? ' <span class="chip warn">Falta la renta en el contrato</span>' : c.renta <= m.indice.max ? ' <span class="chip ok">Por debajo</span>' : ' <span class="chip bad">Por encima</span>'; })()}` : m.tipo === "vivienda" ? '<span class="chip warn">Sin certificado</span> <span class="sub">súbelo a la Bandeja</span>' : "—"}</dd>
       </dl>
       <div class="toolbar"><button type="button" data-edit-inm="${m.id}">Editar</button>${(() => { const c = vigente(m); return c ? `<button type="button" data-edit-ct="${c.id}">📄 Contrato</button>` : m.situacion === "arrendado" ? `<button type="button" data-new-ct="${m.id}">＋ Contrato</button>` : ""; })()}</div></div>`;
   }).join("") + `</div>`;
