@@ -1225,6 +1225,17 @@ function renderCuentas(){
     </div>`;
   }).join("") + `</div>`;
   if (inms.length > 1) h += `<div class="tiles"><div class="tile"><div class="k">Ingresos ${curYear}</div><div class="v">${eur(tot.ing)}</div></div><div class="tile"><div class="k">Gastos y amortizaciones</div><div class="v">${eur(tot.ded)}</div></div><div class="tile"><div class="k">Neto reducido</div><div class="v">${eur(tot.neto)}</div><div class="sub">Con amortizaciones y reducción</div></div></div>`;
+  // Apuntes repetidos
+  const rep = repetidos(curYear, curInm);
+  if (rep.length){
+    const linea = o => `<li style="align-items:flex-start"><div class="grow" style="white-space:normal"><b>${esc(iById(o.borrar.inm)?.alias || "")}</b> · ${o.por === "generada"
+      ? `«${esc(o.borrar.concepto)}» generada del contrato (${fdate(o.borrar.fecha)}, ${eur(o.borrar.importe)}) y la transferencia del banco del ${fdate(o.queda.fecha)} (${eur(o.queda.importe)})`
+      : `«${esc(o.borrar.concepto)}» del ${fdate(o.borrar.fecha)} por ${eur(o.borrar.importe)} está dos veces`}</div></li>`;
+    h += `<div class="panel" style="border-color:var(--warn)"><div class="panel-head"><h2>⚠️ Apuntes repetidos en ${curYear}</h2><span class="sub">${rep.length}</span></div>
+      <p class="note" style="margin-bottom:10px">Cuentan dos veces en la Renta. Se borra la renta generada del contrato (se queda la del banco, que es lo que cobrasteis de verdad) o la segunda copia.</p>
+      <ul class="mini">${rep.map(linea).join("")}</ul>
+      <div class="toolbar" style="margin-top:10px"><button type="button" class="danger" id="repDel">🧹 Borrar ${rep.length} ${plural(rep.length, "repetido", "repetidos")}</button></div></div>`;
+  }
   // Lista de apuntes
   const ms = movsOf(curYear, curInm).sort((a, b) => b.fecha.localeCompare(a.fecha) || (a.tipo === b.tipo ? 0 : a.tipo === "ingreso" ? 1 : -1));
   h += `<div class="panel"><div class="panel-head"><h2>📒 Apuntes de ${curYear}</h2><span class="sub">${ms.length}</span></div>`;
@@ -1235,6 +1246,7 @@ function renderCuentas(){
   }).join("")}</ul>` : `<div class="empty">No hay apuntes en ${curYear}${curInm !== "todos" ? " para este inmueble" : ""}. Añade un gasto o genera las rentas desde el contrato.</div>`;
   h += `</div>`;
   $("v-cuentas").innerHTML = h;
+  if ($("repDel")) armDelete($("repDel"), () => { const n = borrarRepetidos(repetidos(curYear, curInm)); save(); toast(`✓ ${n} ${plural(n, "apunte repetido borrado", "apuntes repetidos borrados")}.`); });
 }
 
 // Rentas mensuales a partir de los contratos (sin duplicar las que ya están)
@@ -1251,6 +1263,7 @@ function generarRentas(m, y){
       if (fin && iniMes > fin) continue;                           // ya terminado
       const key = `renta:${c.id}:${y}-${String(mes + 1).padStart(2, "0")}`;
       if (db.movs.some(x => x.key === key)) continue;
+      if (db.movs.some(x => x.inm === m.id && x.tipo === "ingreso" && x.cat === "renta" && x.origen !== "contrato" && x.fecha && Math.abs(toDate(x.fecha) - toDate(f)) <= 15 * DAY)) continue; // ya está la del banco
       const imp = rentaEn(c, f);
       if (!imp){ sin++; continue; }
       db.movs.push({ id:"g-" + uid(), key, ct:c.id, inm:m.id, tipo:"ingreso", cat:"renta", fecha:f, importe:imp, concepto:`Renta de ${MESES[mes]}`, proveedor:c.inquilinos.filter(q => q.nombre).map(q => q.nombre).join(" y "), origen:"contrato", docs:[] });
@@ -1258,6 +1271,35 @@ function generarRentas(m, y){
     }
   }
   return { n, sin };
+}
+// Apuntes repetidos de un año:
+// · rentas generadas desde el contrato que ya tienen su transferencia real del banco (se emparejan una a una, a ±20 días)
+// · copias exactas: mismo piso, tipo, importe, fecha y concepto
+function repetidos(y, inmSel = "todos"){
+  const out = [], ms = movsOf(y, inmSel);
+  for (const m of db.inmuebles){
+    if (inmSel !== "todos" && m.id !== inmSel) continue;
+    const gen = ms.filter(x => x.inm === m.id && x.tipo === "ingreso" && x.cat === "renta" && x.origen === "contrato");
+    const real = ms.filter(x => x.inm === m.id && x.tipo === "ingreso" && x.cat === "renta" && x.origen !== "contrato");
+    const pares = [];
+    for (const g of gen) for (const r of real){ const d = Math.abs(toDate(g.fecha) - toDate(r.fecha)) / DAY; if (d <= 20) pares.push({ g, r, d }); }
+    pares.sort((a, b) => a.d - b.d);
+    const usados = new Set();
+    for (const p of pares){ if (usados.has(p.g.id) || usados.has(p.r.id)) continue; usados.add(p.g.id); usados.add(p.r.id); out.push({ borrar:p.g, queda:p.r, por:"generada" }); }
+  }
+  const visto = new Map();
+  for (const x of ms.slice().sort((a, b) => (b.docs?.length || 0) - (a.docs?.length || 0))){
+    const k = [x.inm, x.tipo, x.cat, x.fecha, (+x.importe).toFixed(2), norm(x.concepto)].join("|");
+    if (visto.has(k)){ if (!out.some(o => o.borrar.id === x.id)) out.push({ borrar:x, queda:visto.get(k), por:"copia" }); }
+    else visto.set(k, x);
+  }
+  return out;
+}
+function borrarRepetidos(lista){
+  const ids = new Set(lista.map(o => o.borrar.id));
+  db.movs.filter(x => ids.has(x.id)).forEach(x => (x.docs || []).forEach(d => { if (!db.movs.some(o => !ids.has(o.id) && o.docs?.some(e => e.id === d.id))) IDB.del(d.id).catch(() => {}); }));
+  db.movs = db.movs.filter(x => !ids.has(x.id));
+  return ids.size;
 }
 // ¿Hay ya un apunte casi igual? (mismo inmueble, tipo e importe, fecha a ±5 días)
 function duplicado(x){
@@ -2418,8 +2460,10 @@ async function guardarBandeja(){
   const files = new Map(); for (const p of bandeja) if (p.origen === "extracto") files.set(p.file.id, p.file);
   for (const f of files.values()){ if (db.archivo.some(a => a.hash && a.hash === f.hash)) continue; await IDB.put(f.id, f.blob); db.archivo.push({ ...meta(f), kind:"extracto", year:+(bandeja.find(p => p.file === f)?.fecha || "").slice(0, 4) || curYear }); }
   bandeja = []; bandejaMsg = "";
+  const anios = [...new Set(sel.map(p => +String(p.fecha).slice(0, 4)).filter(Boolean))];
+  const sust = borrarRepetidos(anios.flatMap(y => repetidos(y).filter(o => o.por === "generada")));
   save();
-  toast(`✓ ${nuevos} ${plural(nuevos, "apunte nuevo", "apuntes nuevos")}${adj ? ` y ${adj} ${plural(adj, "justificante adjuntado", "justificantes adjuntados")}` : ""}.`);
+  toast(`✓ ${nuevos} ${plural(nuevos, "apunte nuevo", "apuntes nuevos")}${adj ? ` y ${adj} ${plural(adj, "justificante adjuntado", "justificantes adjuntados")}` : ""}${sust ? `. ${sust} ${plural(sust, "renta generada del contrato sustituida", "rentas generadas del contrato sustituidas")} por la transferencia real` : ""}.`);
 }
 
 function renderBandeja(){
