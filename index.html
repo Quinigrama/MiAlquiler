@@ -345,7 +345,11 @@ const redOptsHtml = v => RED_GRUPOS.map(([g, l]) => `<optgroup label="${esc(g)}"
 // Prórroga tácita (art. 10.1 LAU) tras el plazo mínimo de 5 años, si ese plazo acaba después del 1/12/2026: 80 % durante la prórroga
 const PR80_DESDE = "2026-12-02";
 // Automático: se aplica si el contrato sigue tras sus 5 años sin firmar otro nuevo, salvo que lo desmarques (gran tenedor, renta por encima del límite…)
-const pr80Desde = c => c && c.pr80 !== false && c.bajoIndice !== false && c.regimen !== "antiguo" && c.inicio ? addYears(c.inicio, 5) : null;
+// Índice de referencia del alquiler (certificado del Ministerio de Vivienda): si la ficha tiene el límite, manda la renta frente a él;
+// si no, lo que se marque a mano en el contrato
+const limiteRef = c => { const m = c && iById(c.inmueble); return m?.indice?.max > 0 ? m.indice : null; };
+const bajoLimite = c => { const l = limiteRef(c); return l && c.renta > 0 ? c.renta <= l.max : c.bajoIndice !== false; };
+const pr80Desde = c => c && c.pr80 !== false && bajoLimite(c) && c.regimen !== "antiguo" && c.inicio ? addYears(c.inicio, 5) : null;
 const pr80Aplica = c => { const p = pr80Desde(c); return p && p >= PR80_DESDE ? p : null; };
 // Reducción del contrato en una fecha
 // Próximo vencimiento y fecha límite para avisar de que no se prorroga (art. 9 y 10 LAU: 5 años obligatorios y hasta 3 prórrogas anuales;
@@ -423,7 +427,7 @@ function normalize(d){
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
   for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; c.cartas ||= []; c.prorrogas ||= []; }
   d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.archivo ||= []; d.bienes ||= [];
-  for (const m of d.inmuebles){ m.accesorios ||= []; if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true }; }
+  for (const m of d.inmuebles){ m.accesorios ||= []; m.docs ||= []; if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true }; }
   for (const x of d.movs) x.docs ||= [];
   return d;
 }
@@ -512,7 +516,12 @@ function avisos(){
     const pv = preaviso(c);
     if (pv){ const d = daysTo(pv.limite);
       if (d >= 0 && d <= 120) add(d <= 30 ? "alta" : "media", "📮", `${name}: si queréis recuperar el piso, avisad antes del ${fdate(pv.limite)}`,
-        `El ${fdate(pv.fin)} acaban ${pv.tipo}. Para que no se prorrogue, el arrendador tiene que avisar al inquilino con al menos 4 meses de antelación (art. 10 LAU), por un medio que deje constancia, como un burofax. Si se convalida el RDL 28/2026, serán 6 meses. Si no avisáis, sigue un año más${p80 && pv.fin >= p80 ? "" : p80 ? ", ya con el 80 % de reducción" : ""}. Si queréis que sigan, no hay que hacer nada.`, { ct:c.id }); }
+        `El ${fdate(pv.fin)} acaban ${pv.tipo}. Para que no se prorrogue, el arrendador tiene que avisar al inquilino con al menos 4 meses de antelación (art. 10 LAU), por un medio que deje constancia, como un burofax. Si no avisáis, sigue un año más${p80 && pv.fin >= p80 ? "" : p80 ? ", ya con el 80 % de reducción" : ""}. Si queréis que sigan, no hay que hacer nada.`, { ct:c.id }); }
+    if (c.habitual && m?.tipo === "vivienda" && c.regimen !== "antiguo"){
+      const lim = limiteRef(c);
+      if (lim && c.renta > lim.max) add("alta", "📊", `${name}: renta por encima del índice de referencia`, `Cobráis ${eur(c.renta)} y el máximo del certificado es ${eur(lim.max)}. Así no hay 80 % en la prórroga tácita ni 100 % en un contrato nuevo.`, { ct:c.id });
+      else if (!lim && pr80Aplica(c) && daysTo(pr80Aplica(c)) <= 400) add("info", "📊", `${name}: falta el certificado del índice de referencia`, "Para aplicar el 80 % de la prórroga tácita la renta tiene que estar por debajo del límite. Descarga el certificado en el Ministerio de Vivienda y súbelo a la Bandeja.", { inm:m.id });
+    }
     const a = actualizaciones(c);
     if (!a && c.indice !== "ninguno" && !c.inicio && !c.actRef) add("info", "📈", `${name}: ¿cuándo toca la subida?`, "Pon la fecha de inicio del contrato o la de referencia de la subida para avisarte cada año.", { ct:c.id });
     if (a){
@@ -626,6 +635,7 @@ function renderInmuebles(){
         <dt>Construcción</dt><dd class="num">${m.cat.constr ? eur(m.cat.constr) : "—"}</dd>
         <dt>Adquisición</dt><dd>${esc(label(ADQ, m.adq.forma))}${m.adq.fecha ? " · " + fdate(m.adq.fecha) : ""}</dd>
         <dt>Amortización 3 %</dt><dd class="num">${am ? eur(am.anual) + "/año" : "—"}</dd>
+        <dt>Índice de referencia</dt><dd class="num">${m.indice?.max ? `${eur(m.indice.min)}–${eur(m.indice.max)}${(() => { const c = vigente(m); return c?.renta ? (c.renta <= m.indice.max ? ' <span class="chip ok">Por debajo</span>' : ' <span class="chip bad">Por encima</span>') : ""; })()}` : "—"}</dd>
       </dl>
       <div class="toolbar"><button type="button" data-edit-inm="${m.id}">Editar</button>${(() => { const c = vigente(m); return c ? `<button type="button" data-edit-ct="${c.id}">📄 Contrato</button>` : m.situacion === "arrendado" ? `<button type="button" data-new-ct="${m.id}">＋ Contrato</button>` : ""; })()}</div></div>`;
   }).join("") + `</div>`;
@@ -764,6 +774,12 @@ function editInm(id){
       ${fMoney("m-adqp", "Precio o valor declarado (€)", m.adq.precio, "En herencia o donación, el valor del impuesto de sucesiones o donaciones.")}
       ${fMoney("m-adqg", "Gastos e impuestos (€)", m.adq.gastos, "Notaría, registro, ITP o IVA, gestoría… los de la compra.")}
     </div></fieldset>
+    <fieldset><legend>Índice de referencia del alquiler (Ministerio de Vivienda)</legend><div class="fields">
+      ${fMoney("m-imin", "Renta de referencia mínima (€/mes)", m.indice?.min)}
+      ${fMoney("m-imax", "Renta de referencia máxima (€/mes)", m.indice?.max, "Es el límite: por debajo, hay 80 % en la prórroga y 100 % en algunos contratos nuevos.")}
+      ${fDate("m-ifec", "Fecha del certificado", m.indice?.fecha)}
+      <label class="check"><input type="checkbox" id="m-iten"${m.indice?.tensionada ? " checked" : ""}> Zona de mercado residencial tensionado</label>
+    </div>${(m.docs || []).length ? `<ul class="mini" style="margin-top:8px">${m.docs.map(d => `<li><span class="grow">📎 ${esc(d.name)}</span><button type="button" class="ghost" data-mdoc="${d.id}">Abrir</button></li>`).join("")}</ul>` : `<p class="note">Sube el certificado a la Bandeja y se rellena solo.</p>`}</fieldset>
     <fieldset><legend>Catastro (recibo del IBI)</legend><div class="fields">
       ${fMoney("m-vct", "Valor catastral total (€)", m.cat.total)}
       ${fMoney("m-vcc", "Valor catastral de la construcción (€)", m.cat.constr)}
@@ -801,6 +817,7 @@ function editInm(id){
     Object.assign(m, { alias:val("m-alias"), tipo:val("m-tipo"), situacion:val("m-sit"), direccion:val("m-dir"), cp:val("m-cp"), municipio:val("m-mun"), provincia:val("m-prov"), rc:val("m-rc").toUpperCase().replace(/\s/g, ""), notas:val("m-notas") });
     m.adq = { forma:val("m-adq"), fecha:val("m-adqf"), precio:money("m-adqp"), gastos:money("m-adqg") };
     m.cat = { total:money("m-vct"), constr:money("m-vcc"), ref:money("m-vref"), anio:val("m-vca"), revisado:$("m-rev").checked };
+    m.indice = money("m-imax") ? { ...(m.indice || {}), min:money("m-imin"), max:money("m-imax"), fecha:val("m-ifec"), tensionada:$("m-iten").checked } : null;
     readAcc();
     if (isNew) db.inmuebles.push(m); else db.inmuebles[db.inmuebles.findIndex(x => x.id === m.id)] = m;
     // Inmuebles que pasan a ser accesorios de este: sus apuntes, muebles y reglas vienen aquí y desaparecen de la lista
@@ -924,7 +941,8 @@ function editCt(id, inmPre){
     <fieldset><legend>Para la declaración</legend><div class="fields">
       <label class="check wide"><input type="checkbox" id="c-hab"${c.habitual ? " checked" : ""}> Es la vivienda habitual del inquilino (da derecho a la reducción)</label>
       <div class="wide"><label class="field">Reducción del rendimiento neto<select id="c-red">${redOptsHtml(c.red)}</select></label></div>
-      <label class="check wide"><input type="checkbox" id="c-bajo"${c.bajoIndice !== false ? " checked" : ""}> La renta está por debajo del límite del sistema de índices de precios de referencia</label>
+      <label class="check wide" id="c-bajowrap"><input type="checkbox" id="c-bajo"${c.bajoIndice !== false ? " checked" : ""}> La renta está por debajo del límite del sistema de índices de precios de referencia</label>
+      <div class="wide calc" id="c-limite" hidden></div>
       <label class="check wide"><input type="checkbox" id="c-pr80"${c.pr80 !== false ? " checked" : ""}> Aplicar el 80 % cuando el contrato siga en prórroga tácita tras sus 5 años (automático; desmárcalo si sois grandes tenedores)</label>
     </div><p class="note" id="redNote"></p></fieldset>
     <fieldset><legend>Documentos</legend><div id="docBox">${docRows()}</div><div class="toolbar"><button type="button" id="docAdd">📎 Adjuntar</button></div></fieldset>
@@ -944,9 +962,14 @@ function editCt(id, inmPre){
     $("finCalc").innerHTML = f ? `Fin del contrato: <b>${fdateLong(f)}</b>${c.estado === "vigente" ? ` (${daysTo(f) >= 0 ? `faltan ${daysTo(f)} días` : `venció hace ${-daysTo(f)} días`})` : ""}.` : c.regimen === "antiguo" ? "Contrato de renta antigua: sin fecha de fin." : "Pon la fecha de inicio y la duración para saber cuándo vence.";
     const a = actualizaciones(c);
     $("actCalc").innerHTML = c.indice === "ninguno" ? "Este contrato no se actualiza." : a ? (a.pendiente ? `⚠️ La subida del ${fdate(a.last)} está <b>pendiente</b>.` : `Próxima subida: <b>${fdateLong(a.next)}</b>.`) + (c.renta && c.indice === "fijo" && c.fijo ? ` Con el ${fmt(c.fijo)} % pactado, la renta pasaría a <b>${eur(c.renta * (1 + c.fijo / 100))}</b>.` : "") : "Pon la fecha de inicio (o la de referencia) para calcular los aniversarios.";
+    const lim = limiteRef(c);
+    $("c-bajowrap").hidden = !!(lim && c.renta > 0); $("c-limite").hidden = !(lim && c.renta > 0);
+    if (lim && c.renta > 0) $("c-limite").innerHTML = c.renta <= lim.max
+      ? `✅ Por debajo del límite: <b>${eur(c.renta)}</b> frente a un máximo de <b>${eur(lim.max)}</b> (certificado del ${fdate(lim.fecha)}; rango ${eur(lim.min)}–${eur(lim.max)}).`
+      : `⚠️ Por encima del límite: <b>${eur(c.renta)}</b> frente a un máximo de <b>${eur(lim.max)}</b> (certificado del ${fdate(lim.fecha)}). Sin el 80 % en la prórroga ni el 100 %.`;
     const p80 = pr80Desde(c);
     $("redNote").innerHTML = (!c.habitual ? "Si no es vivienda habitual del inquilino, no hay reducción." : c.inicio && c.inicio >= "2026-12-01" ? "Contrato desde el 1/12/2026: el porcentaje depende de cómo cambia la renta frente a la anterior (RDL 29/2026)." : c.regimen === "ley23" ? "Contratos desde el 26/05/2023: el caso general es el 50 %; los porcentajes mayores dependen de la zona tensionada." : "Contratos anteriores al 26/05/2023: reducción del 60 %.")
-      + (c.regimen === "antiguo" ? "" : !c.habitual ? "" : c.bajoIndice === false ? " Con la renta por encima del límite no hay 80 % en la prórroga." : c.pr80 === false ? "" : (p80 && p80 >= PR80_DESDE ? ` Si no firmáis un contrato nuevo, desde el <b>${fdate(p80)}</b> sigue en prórroga tácita con un <b>80 %</b>.` : p80 ? " Los 5 años mínimos acabaron antes del 1/12/2026: sin 80 % en la prórroga." : " Pon la fecha de inicio para saber cuándo pasa al 80 %."));
+      + (c.regimen === "antiguo" ? "" : !c.habitual ? "" : !bajoLimite(c) ? " Con la renta por encima del límite no hay 80 % en la prórroga." : c.pr80 === false ? "" : (p80 && p80 >= PR80_DESDE ? ` Si no firmáis un contrato nuevo, desde el <b>${fdate(p80)}</b> sigue en prórroga tácita con un <b>80 %</b>.` : p80 ? " Los 5 años mínimos acabaron antes del 1/12/2026: sin 80 % en la prórroga." : " Pon la fecha de inicio para saber cuándo pasa al 80 %."));
     if (!$("s-desde").dataset.touched){ const a2 = actualizaciones(c); $("s-desde").value = a2 ? (a2.pendiente ? a2.last : a2.next) : todayIso(); }
   };
   openDlg(isNew ? "Nuevo contrato" : (iById(c.inmueble)?.alias || "Contrato"), body, () => {
@@ -1031,6 +1054,7 @@ function armDelete(b, fn){
   };
 }
 
+document.addEventListener("click", e => { const b = e.target.closest("[data-mdoc]"); if (!b) return; const d = db.inmuebles.flatMap(m => m.docs || []).find(x => x.id === b.dataset.mdoc); if (d) openDoc(d); });
 // Clics en las vistas
 document.querySelector("main").addEventListener("click", e => {
   const t = e.target;
@@ -1321,6 +1345,7 @@ function allDocs(){
   for (const c of db.contratos) for (const d of c.docs) out.push({ d, owner:c, path:[iById(c.inmueble)?.alias || "Inmueble", "Contratos"] });
   for (const x of db.movs) for (const d of x.docs || []) out.push({ d, owner:x, path:[iById(x.inm)?.alias || "Inmueble", String(x.fecha?.slice(0, 4) || "Sin año"), x.tipo === "ingreso" ? "Ingresos" : "Gastos"] });
   for (const a of db.archivo || []) out.push({ d:a, owner:null, path:["Extractos del banco", String(a.year || "Sin año")] });
+  for (const m of db.inmuebles) for (const d of m.docs || []) out.push({ d, owner:m, path:[m.alias || "Inmueble", "Certificados"] });
   return out;
 }
 
@@ -1625,6 +1650,7 @@ function editCarta(ctId){
       ${mail ? `<button type="button" id="k-mail">✉️ Correo</button>` : ""}
       <button type="button" id="k-pdf">📄 PDF</button>
     </div>
+    <p class="note" id="k-lim" style="color:var(--warn)"></p>
     <p class="note">«Guardar» apunta la subida en el historial del contrato y guarda una copia de la carta.</p>`, () => {
     if (!st.nueva || !st.efecto){ toast("Falta la nueva renta o la fecha."); return false; }
     const k = cById(ctId);
@@ -1644,7 +1670,8 @@ function editCarta(ctId){
     if (id === "k-new"){ st.nueva = money("k-new"); if (st.nueva && st.actual) $("k-pct").value = fmt((st.nueva / st.actual - 1) * 100), st.pct = money("k-pct"); }
     else if (st.pct != null && st.actual){ st.nueva = Math.round(st.actual * (1 + st.pct / 100) * 100) / 100; $("k-new").value = fmt(st.nueva); }
   };
-  $("dlgBody").oninput = e => { if (e.target.id === "k-txt"){ st.editado = true; return; } lee(e.target.id); pinta(); };
+  const limAviso = () => { const l = limiteRef(c); $("k-lim").textContent = l && st.nueva > l.max ? `⚠️ Con ${eur(st.nueva)} os pasáis del límite del índice de referencia (${eur(l.max)}): perderíais el 80 % de la prórroga tácita.` : ""; };
+  $("dlgBody").oninput = e => { if (e.target.id === "k-txt"){ st.editado = true; return; } lee(e.target.id); pinta(); limAviso(); };
   $("dlgBody").onchange = $("dlgBody").oninput;
   lee(); pinta();
   const txt = () => $("k-txt").value;
@@ -2189,6 +2216,39 @@ function docData(lines, defY){
   return { importe:best ? best.v : fallback, fecha, nif:nifs[0] || "", factura:fra, ejercicio:ej ? +ej : null };
 }
 
+// --- Certificado informativo de referencia de precios de alquiler (Ministerio de Vivienda) ---
+const esCertIndice = t => /certificado informativo de referencia de precios de alquiler|rango de valores del alquiler de vivienda/i.test(t);
+function leerCertIndice(t){
+  const rango = t.match(/entre\s+([\d.]+,\d{2})\s+y\s+([\d.]+,\d{2})\s+euros/i);
+  const fe = t.match(/fecha de generaci[oó]n\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+  const ten = t.match(/residencial tensionado\s*:?\s*(s[ií]|no)\b/i);
+  return { rc:(t.toUpperCase().replace(/\s/g, " ").match(RE_RC) || [""])[0], min:rango ? parseAny(rango[1]) : null, max:rango ? parseAny(rango[2]) : null,
+    fecha:fe ? getDateIso(fe[1]) : todayIso(), tensionada:ten ? /^s/i.test(ten[1]) : false,
+    sup:+((t.match(/superficie construida\s*:?\s*(\d+)/i) || [])[1] || 0) || null, informe:(t.match(/id\.?\s*informe\s*:?\s*([0-9a-f-]{20,})/i) || [])[1] || "" };
+}
+async function importarCertIndice(t, f, hash){
+  const c = leerCertIndice(t);
+  if (!c.max) return `${f.name}: es un certificado del índice de referencia, pero no he encontrado el rango de precios.`;
+  let m = c.rc && db.inmuebles.find(x => x.rc === c.rc || (x.accesorios || []).some(a => a.rc === c.rc));
+  let por = m ? "referencia catastral" : "";
+  if (!m){ const di = detectInm(t); m = di.inm ? iById(di.inm) : null; por = di.why; }
+  const guardar = async inm => {
+    if (!inm.rc && c.rc) inm.rc = c.rc;
+    inm.indice = { min:c.min, max:c.max, fecha:c.fecha, tensionada:c.tensionada, sup:c.sup, informe:c.informe };
+    const d = { id:"d-" + uid(), name:f.name, type:f.type || "application/pdf", size:f.size, hash, added:todayIso(), kind:"certificado" };
+    await IDB.put(d.id, f); (inm.docs ||= []).push(d);
+    save();
+    const ct = vigente(inm);
+    return `${f.name}: índice de referencia de ${inm.alias}, de ${eur(c.min)} a ${eur(c.max)} al mes${c.tensionada ? " (zona tensionada)" : ""}.` + (ct?.renta ? (ct.renta <= c.max ? ` La renta (${eur(ct.renta)}) está por debajo del límite ✅` : ` ⚠️ La renta (${eur(ct.renta)}) está por encima del límite.`) : "");
+  };
+  if (m) return guardar(m);
+  // No sé de qué piso es: lo pregunto
+  return new Promise(ok => {
+    openDlg("¿De qué inmueble es?", `<p class="note">Certificado del índice de referencia${c.rc ? ` (ref. catastral ${esc(c.rc)})` : ""}: de ${eur(c.min)} a ${eur(c.max)} al mes.</p>
+      <label class="field">Inmueble<select id="ci-inm">${db.inmuebles.map(x => `<option value="${x.id}">${esc(x.alias)}</option>`).join("")}</select></label>`, () => { guardar(iById(val("ci-inm"))).then(ok); });
+    $("dlg").addEventListener("close", () => setTimeout(() => ok(`${f.name}: certificado del índice de referencia.`), 50), { once:true });
+  });
+}
 // --- Bandeja en curso (en memoria hasta que pulses «Guardar») ---
 let bandeja = [], bandejaMsg = "";
 const pid = () => "p-" + uid();
@@ -2229,6 +2289,7 @@ async function procesar(files){
       if (ya){ msgs.push(`«${f.name}» ya estaba ${ya.pid ? "en la bandeja" : "guardado"}: no lo vuelvo a leer.`); continue; }
       const r = await readFile(f);
       const joined = r.lines.join(" "), defY = fileYear(joined);
+      if (esCertIndice(joined)){ msgs.push(await importarCertIndice(joined, f, hash)); continue; }
       if (esFicha(joined)){ const ok = await importarFichas(r.kind === "pdf" ? { items:await pdfXY(await f.arrayBuffer()) } : { table:r.table || [] }, f.name); msgs.push(ok ? `${f.name}: es la hoja de fichas de las viviendas; revisa a dónde va cada columna.` : `${f.name}: parece la hoja de fichas, pero no he sabido leerla.`); continue; }
       const movs = r.kind === "sheet" ? movsFromTable(r.table, defY) || [] : r.kind === "pdf" ? movsFromItems(r.items, defY) : [];
       if (movs.length >= 3){
