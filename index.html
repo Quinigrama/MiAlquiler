@@ -1024,7 +1024,7 @@ async function openDoc(d){
   const w = window.open("", "_blank");
   let blob = await IDB.get(d.id).catch(() => null);
   if (!blob && d.driveId){ try { blob = await GD.download(d.driveId); if (blob) await IDB.put(d.id, blob); } catch(e){} }
-  if (!blob){ w && w.close(); toast(d.driveId ? "Está en Drive: toca «☁️» para conectar y vuelve a abrirlo." : "Este documento no está en este aparato."); return; }
+  if (!blob){ w && w.close(); toast(d.driveId ? "Está en Drive: toca «☁️» para conectar y vuelve a abrirlo." : "Este documento se adjuntó en otro aparato y todavía no se ha subido a Drive. Abre la app en ese aparato y toca «☁️» para sincronizar."); return; }
   const url = URL.createObjectURL(blob);
   if (w) w.location = url; else location.href = url;
   setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -1342,6 +1342,8 @@ function editArrastre(inmId){
   });
 }
 // Todos los documentos (de contratos y de apuntes), con su carpeta de Drive
+// Documentos de todos los usuarios de este aparato (para subirlos a Drive aunque no sea el usuario elegido)
+function docsTodos(){ return todosLosDatos().flatMap(u => u.data ? conDatos(u.data, allDocs).map(o => ({ ...o, uid:u.id, data:u.data })) : []); }
 function allDocs(){
   const out = [];
   for (const c of db.contratos) for (const d of c.docs) out.push({ d, owner:c, path:[iById(c.inmueble)?.alias || "Inmueble", "Contratos"] });
@@ -2835,18 +2837,21 @@ const GD = (() => {
   }
   // Documentos: se suben una vez (se reconocen por su huella) y se apunta su id de Drive en el contrato
   async function putDoc(item){
-    const o = allDocs().find(o => o.d.id === item.doc), d = o && o.d;
+    const o = docsTodos().find(o => o.d.id === item.doc), d = o && o.d;
     if (!d || d.driveId) return false;
     const blob = await IDB.get(d.id).catch(() => null); if (!blob) return false;
     const fid = await folderId([ROOT, ...o.path.map(safe)]);
     let id = d.hash ? (await list(q(fid) + " in parents and trashed=false and appProperties has { key='h' and value=" + q(d.hash) + " }", "id"))[0]?.id : null;
     if (!id) id = (await upload(null, { name:d.name, parents:[fid], ...(d.hash ? { appProperties:{ h:d.hash } } : {}) }, blob, d.type || "application/octet-stream")).id;
-    d.driveId = id; db.updated = Date.now(); persist(); LS.set(K.chg, Date.now());
+    d.driveId = id;
+    if (o.uid === users.cur){ db.updated = Date.now(); persist(); }
+    else { o.data.updated = Date.now(); try { localStorage.setItem(dataKey(o.uid), JSON.stringify(o.data)); } catch(e){} }
+    LS.set(K.chg, Date.now());
     return true;
   }
   async function flushDocs(){
     let n = 0;
-    for (const { d } of allDocs()) if (!d.driveId && !queue.some(x => x.doc === d.id)) queue.push({ doc:d.id });
+    for (const { d } of docsTodos()) if (!d.driveId && !queue.some(x => x.doc === d.id)) queue.push({ doc:d.id });
     while (queue.length){ render(`Subiendo documentos a Drive… (${queue.length})`); if (await putDoc(queue[0])) n++; queue.shift(); saveQueue(); }
     return n;
   }
