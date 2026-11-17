@@ -160,6 +160,12 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
 #v-renta table td.l,#v-renta table th.l{text-align:left}
 #v-renta table th{font:500 11px var(--f-num);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
 #v-renta table tr.tot td{font-weight:600;border-top:1.5px solid var(--ink)}
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl td,.tbl th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:right;font-weight:400}
+.tbl td.num{white-space:nowrap}
+.tbl td.l,.tbl th.l{text-align:left}
+.tbl th{font:500 11px var(--f-num);letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.tbl tr.tot td{font-weight:600;border-top:1.5px solid var(--ink)}
 @media print{
   :root{--bg:#fff;--paper:#fff;--ink:#000;--muted:#444;--line:#bbb}
   nav.tabs,header .toolbar,#installHelp,.noprint,#driveChip,.toast{display:none!important}
@@ -189,6 +195,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <button type="button" role="tab" data-tab="contratos" aria-selected="false">📄 Contratos</button>
     <button type="button" role="tab" data-tab="cuentas" aria-selected="false">💶 Cuentas</button>
     <button type="button" role="tab" data-tab="amort" aria-selected="false">📉 Amortizaciones</button>
+    <button type="button" role="tab" data-tab="comparar" aria-selected="false">📊 Comparar</button>
     <button type="button" role="tab" data-tab="renta" aria-selected="false">🧾 Renta</button>
     <button type="button" role="tab" data-tab="bandeja" aria-selected="false">📥 Bandeja</button>
     <button type="button" role="tab" data-tab="titulares" aria-selected="false">👫 Titulares</button>
@@ -201,6 +208,7 @@ dialog::backdrop{background:rgba(20,15,12,.45)}
     <section class="view" id="v-contratos" role="tabpanel" hidden></section>
     <section class="view" id="v-cuentas" role="tabpanel" hidden></section>
     <section class="view" id="v-amort" role="tabpanel" hidden></section>
+    <section class="view" id="v-comparar" role="tabpanel" hidden></section>
     <section class="view" id="v-renta" role="tabpanel" hidden></section>
     <section class="view" id="v-bandeja" role="tabpanel" hidden></section>
     <section class="view" id="v-titulares" role="tabpanel" hidden></section>
@@ -541,6 +549,11 @@ function avisos(){
   }
   { const y = new Date().getFullYear();
     for (const m of db.inmuebles){ const a = amortMuebles(m, y), b = amortMuebles(m, y + 1); if (a - b >= 100) add("media", "📉", `${m.alias}: en ${y + 1} la amortización de muebles baja ${eur(a - b)}`, `Este año terminan de amortizarse algunos muebles. Pasará de ${eur(a)} a ${eur(b)}: el alquiler tributará un poco más.`, { tab:"amort" }); } }
+  for (const s of seguros()){
+    const d = daysTo(s.renueva);
+    if (d >= 0 && d <= 60) add("media", "🛡️", `${iById(s.inm)?.alias || "Seguro"}: el seguro renueva el ${fdate(s.renueva)}`,
+      `La última prima fue de ${eur(s.importe)}${s.antes ? ` (${s.pct >= 0 ? "+" : ""}${fmt(s.pct, 1)} % frente a la anterior, ${eur(s.antes)})` : ""}. Buen momento para pedir otros presupuestos.`, { tab:"comparar" });
+  }
   const rank = { alta:0, media:1, info:2 };
   return out.sort((a, b) => rank[a.nivel] - rank[b.nivel]);
 }
@@ -707,7 +720,7 @@ function renderUsers(){
   if ($("uName") && document.activeElement !== $("uName")) $("uName").value = curUser().name;
   if ($("uDel")) $("uDel").disabled = users.list.length < 2;
 }
-function render(){ renderUsers(); renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderAmort(); renderRenta(); renderBandeja(); renderTitulares(); }
+function render(){ renderUsers(); renderResumen(); renderInmuebles(); renderContratos(); renderCuentas(); renderAmort(); renderComparar(); renderRenta(); renderBandeja(); renderTitulares(); }
 
 // =====================================================================
 // Navegación
@@ -1189,6 +1202,116 @@ function cuentas(m, y){
   return { ingresos, grupos, limit, pendAnt, limDed, exceso, otros, neto, amI, amM, netoAm, redPct, redKey:rA.red, redMixto:rA.mixto, reduccion, netoRed:netoAm - reduccion, imputacion, vacio, aparte, prorrateado, dias, tot, supuesto, n:ms.length };
 }
 
+// =====================================================================
+// Comparar años: inflación, gastos que suben, cargos nuevos y seguros
+// =====================================================================
+// Inflación media anual en España (INE, IPC general). Se puede corregir o completar en la pestaña
+const IPC_MEDIO = { 2015:-0.5, 2016:-0.2, 2017:2.0, 2018:1.7, 2019:0.7, 2020:-0.3, 2021:3.1, 2022:8.4, 2023:3.5, 2024:2.8, 2025:2.7 };
+const ipcDe = y => { const v = db.ipc?.[y]; return v != null && v !== "" ? +v : IPC_MEDIO[y] ?? null; };
+let cmpYear = null;
+function sumas(m, y){
+  const ms = movsOf(y, m.id), g = new Map();
+  let ing = 0, gas = 0;
+  for (const x of ms){ const v = +x.importe || 0; if (x.tipo === "ingreso"){ ing += v; continue; } gas += v; g.set(x.cat, (g.get(x.cat) || 0) + v); }
+  return { ing, gas, g, n:ms.length };
+}
+// Primas de seguro con su periodo («Del 01082025 Al 01082026»): la última de cada póliza, cuándo renueva y cuánto subió
+function seguros(){
+  const pol = new Map();
+  for (const x of db.movs.filter(x => x.tipo === "gasto" && x.cat === "seguro")){
+    const per = String(x.concepto).match(/del\s*(\d{2})(\d{2})(\d{4})\s*al\s*(\d{2})(\d{2})(\d{4})/i);
+    const num = (String(x.concepto).match(/p[oó]liza:?\s*([0-9A-Z]{5,})/i) || [])[1] || norm(x.concepto).split(" ").slice(0, 3).join(" ");
+    const k = x.inm + "|" + num;
+    (pol.get(k) || pol.set(k, []).get(k)).push({ x, renueva:per ? `${per[6]}-${per[5]}-${per[4]}` : addYears(x.fecha, 1) });
+  }
+  const out = [];
+  for (const l of pol.values()){
+    l.sort((a, b) => a.x.fecha.localeCompare(b.x.fecha));
+    const u = l.at(-1), p = l.at(-2);
+    out.push({ inm:u.x.inm, concepto:u.x.concepto, fecha:u.x.fecha, importe:+u.x.importe, renueva:u.renueva, antes:p ? +p.x.importe : null, pct:p && +p.x.importe ? (u.x.importe / p.x.importe - 1) * 100 : null });
+  }
+  return out.sort((a, b) => a.renueva.localeCompare(b.renueva));
+}
+// Recibos que se repiten este año y no estaban el anterior (derramas, cuotas nuevas o que cambian de importe)
+function cargosNuevos(m, y){
+  const clave = x => (ruleKey(x.concepto) || norm(x.concepto).slice(0, 24));
+  const prev = new Set(movsOf(y - 1, m.id).filter(x => x.tipo === "gasto").map(x => clave(x) + "|" + (+x.importe).toFixed(2)));
+  const prevC = new Map(), nPrev = new Map(), nAhora = new Map();
+  for (const x of movsOf(y - 1, m.id).filter(x => x.tipo === "gasto")){ prevC.set(clave(x), Math.max(prevC.get(clave(x)) || 0, +x.importe)); nPrev.set(clave(x), (nPrev.get(clave(x)) || 0) + 1); }
+  for (const x of movsOf(y, m.id).filter(x => x.tipo === "gasto")) nAhora.set(clave(x), (nAhora.get(clave(x)) || 0) + 1);
+  const g = new Map();
+  for (const x of movsOf(y, m.id).filter(x => x.tipo === "gasto")){
+    const k = clave(x) + "|" + (+x.importe).toFixed(2); if (prev.has(k)) continue;
+    if (prevC.has(clave(x)) && +x.importe <= prevC.get(clave(x)) && nAhora.get(clave(x)) <= nPrev.get(clave(x))) continue; // un recibo que ya existía y ahora es igual o más barato no preocupa
+    const o = g.get(k) || { x, n:0, tot:0, cambio:prevC.has(clave(x)) }; o.n++; o.tot += +x.importe; g.set(k, o);
+  }
+  return [...g.values()].filter(o => o.n >= 2).sort((a, b) => b.tot - a.tot).slice(0, 6);
+}
+function semaforo(pct, ipc, ingreso){
+  if (pct == null || ipc == null) return "";
+  if (ingreso) return pct >= ipc - 0.5 ? "🟢" : pct >= 0 ? "🟡" : "🔴";
+  return pct <= ipc ? "🟢" : pct <= ipc + 5 ? "🟡" : "🔴";
+}
+function barrasAnios(m, ys){
+  const d = ys.map(y => ({ y, ...sumas(m, y) })), max = Math.max(1, ...d.flatMap(o => [o.ing, o.gas]));
+  const W = 300, H = 120, bw = Math.min(22, (W - 20) / (ys.length * 2.6)), step = (W - 20) / ys.length;
+  return `<svg viewBox="0 0 ${W} ${H + 18}" style="width:100%;max-width:420px;height:auto" role="img" aria-label="Ingresos y gastos por año">
+    ${d.map((o, i) => { const x = 10 + i * step + step / 2, hi = o.ing / max * H, hg = o.gas / max * H;
+      return `<rect x="${x - bw - 1}" y="${H - hi}" width="${bw}" height="${hi}" rx="3" fill="var(--ok)"><title>Ingresos ${o.y}: ${eur(o.ing)}</title></rect>
+        <rect x="${x + 1}" y="${H - hg}" width="${bw}" height="${hg}" rx="3" fill="var(--accent)"><title>Gastos ${o.y}: ${eur(o.gas)}</title></rect>
+        <text x="${x}" y="${H + 14}" text-anchor="middle" font-size="11" fill="var(--muted)">${o.y}</text>`; }).join("")}
+    <line x1="0" x2="${W}" y1="${H}" y2="${H}" stroke="var(--line)"/></svg>
+    <div class="sub" style="display:flex;gap:14px"><span><span style="color:var(--ok)">■</span> Ingresos</span><span><span style="color:var(--accent)">■</span> Gastos</span></div>`;
+}
+function renderComparar(){
+  const el = $("v-comparar"); if (!el) return;
+  const ys = [...new Set(db.movs.map(x => +x.fecha?.slice(0, 4)).filter(Boolean))].sort((a, b) => a - b);
+  if (ys.length < 2){ el.innerHTML = `<div class="panel"><div class="panel-head"><h2>📊 Comparar años</h2></div><div class="empty">Necesito apuntes de al menos dos años para comparar. Sube a la Bandeja los extractos del banco de cada año.</div></div>`; return; }
+  const posibles = ys.filter(y => ys.includes(y - 1));
+  const hoyY = new Date().getFullYear();
+  if (!posibles.includes(cmpYear)) cmpYear = posibles.filter(v => v < hoyY).at(-1) || posibles.at(-1) || ys.at(-1); // mejor un año entero
+  const y = cmpYear, a = y - 1, ipc = ipcDe(y);
+  const pct = (b, v) => b > 0 ? (v / b - 1) * 100 : null;
+  const pctTxt = p => p == null ? "—" : `${p >= 0 ? "+" : ""}${fmt(p, 1)} %`;
+  let h = `<div class="panel"><div class="panel-head"><h2>📊 Comparar ${a} con ${y}</h2></div>
+    <div class="fields" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      <label class="field">Año<select id="cmpYear">${(posibles.length ? posibles : ys).slice().reverse().map(v => `<option value="${v}"${v === y ? " selected" : ""}>${v - 1} → ${v}</option>`).join("")}</select></label>
+      <label class="field">Inflación media de ${y} (%)<input type="text" inputmode="decimal" id="cmpIpc" value="${ipc != null ? fmt(ipc, 1) : ""}" placeholder="Del INE"></label>
+    </div>
+    <p class="note" style="margin-top:8px">🟢 sube menos que la inflación · 🟡 algo más · 🔴 bastante más (más de 5 puntos). En las rentas, al revés: 🟢 si suben al menos lo que la inflación.${ipc == null ? " Escribe la inflación del año para ver los colores." : ""}</p></div>`;
+  for (const m of db.inmuebles){
+    const A = sumas(m, a), B = sumas(m, y);
+    if (!A.n && !B.n) continue;
+    const cats = [...new Set([...A.g.keys(), ...B.g.keys()])].sort((p, q) => (B.g.get(q) || 0) - (B.g.get(p) || 0));
+    const fila = (lab, va, vb, ingreso, cls = "") => { const p = pct(va, vb); return `<tr class="${cls}"><td class="l">${lab}</td><td class="num">${eur(va)}</td><td class="num">${eur(vb)}</td><td class="num">${pctTxt(p)} ${semaforo(p, ipc, ingreso)}</td></tr>`; };
+    h += `<div class="panel"><div class="panel-head"><h2>${esc(m.alias)}</h2></div>
+      <div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="l"></th><th class="num">${a}</th><th class="num">${y}</th><th class="num">Cambio</th></tr></thead><tbody>
+      ${fila("<b>Rentas e ingresos</b>", A.ing, B.ing, true)}
+      ${cats.map(k => fila(esc(catLabel("gasto", k)), A.g.get(k) || 0, B.g.get(k) || 0, false)).join("")}
+      ${fila("<b>Total gastos</b>", A.gas, B.gas, false, "tot")}
+      ${fila("<b>Queda (ingresos − gastos)</b>", A.ing - A.gas, B.ing - B.gas, true, "tot")}
+      </tbody></table></div>`;
+    // Renta frente a inflación
+    if (A.ing > 0 && B.ing > 0 && ipc != null){
+      const obj = A.ing * (1 + ipc / 100), dif = B.ing - obj, d1 = diasAlquilado(m, a).dias, d2 = diasAlquilado(m, y).dias;
+      h += `<div class="calc" style="margin-top:10px">🧮 Para no perder poder de compra, en ${y} tendría que haber cobrado <b>${eur(obj)}</b> (lo de ${a} más un ${fmt(ipc, 1)} %). Cobró <b>${eur(B.ing)}</b>: ${Math.abs(dif) < Math.max(1, obj * 0.005) ? "prácticamente al ritmo de la inflación ✅" : dif > 0 ? `<b>${eur(dif)} por encima</b> ✅` : `<b>${eur(-dif)} por debajo</b> ⚠️`}.${Math.abs(d1 - d2) > 5 ? ` Ojo: un año estuvo alquilado ${d1} días y el otro ${d2}.` : ""}${y === hoyY ? ` ${y} aún no ha terminado.` : ""}${pct(A.ing, B.ing) != null && pct(A.ing, B.ing) < Math.max(0.5, ipc - 1.5) && vigente(m)?.regimen !== "antiguo" ? ` <br>¿Se aplicó la subida anual del contrato? La renta casi no ha cambiado.` : ""}</div>`;
+    }
+    const nuevos = cargosNuevos(m, y);
+    if (nuevos.length) h += `<div style="margin-top:10px"><b>🕵️ Recibos que no estaban en ${a}</b><ul class="mini" style="margin-top:6px">${nuevos.map(o => `<li style="align-items:flex-start"><span class="grow" style="white-space:normal">«${esc(o.x.concepto.slice(0, 70))}» · ${eur(o.x.importe)} × ${o.n}${o.cambio ? ` <span class="sub">(este recibo ya se pagaba, pero ahora hay ${o.n} cargos de este importe)</span>` : ` <span class="sub">(nuevo: ¿derrama, cuota extra?)</span>`}</span><b class="num">${eur(o.tot)}</b></li>`).join("")}</ul></div>`;
+    const yy = ys.filter(v => v >= ys.at(-1) - 5);
+    if (yy.length >= 2) h += `<div style="margin-top:12px">${barrasAnios(m, yy)}</div>`;
+    h += `</div>`;
+  }
+  const seg = seguros();
+  if (seg.length) h += `<div class="panel"><div class="panel-head"><h2>🛡️ Seguros</h2></div><ul class="mini">${seg.map(s => { const d = daysTo(s.renueva);
+    return `<li style="align-items:flex-start"><div class="grow" style="white-space:normal"><b>${esc(iById(s.inm)?.alias || "")}</b> · ${eur(s.importe)}${s.antes ? ` <span class="sub">(antes ${eur(s.antes)}, ${pctTxt(s.pct)})</span> ${semaforo(s.pct, ipcDe(+s.fecha.slice(0, 4)), false)}` : ""}<div class="sub">${esc(s.concepto.slice(0, 60))}</div></div><span class="sub" style="white-space:nowrap">${d >= 0 ? `renueva el ${fdate(s.renueva)}` : `venció el ${fdate(s.renueva)}`}</span></li>`; }).join("")}</ul>
+    <p class="note" style="margin-top:8px">Te aviso en el Resumen dos meses antes de cada renovación, para que pidas otros presupuestos si ha subido.</p></div>`;
+  el.innerHTML = h;
+}
+document.addEventListener("change", e => {
+  if (e.target.id === "cmpYear"){ cmpYear = +e.target.value; renderComparar(); }
+  if (e.target.id === "cmpIpc"){ const v = parseEs(e.target.value); db.ipc ||= {}; if (isNaN(v)) delete db.ipc[cmpYear]; else db.ipc[cmpYear] = v; save(); }
+});
 // Buscador de apuntes en todos los años (concepto, proveedor, notas, NIF, nº de factura, nombre del documento, categoría)
 let cuQ = "";
 function buscarMovsHtml(q){
