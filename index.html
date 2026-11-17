@@ -1071,7 +1071,7 @@ document.querySelector("main").addEventListener("click", e => {
   const mv = t.closest("[data-mov]"); if (mv) return editMov(mv.dataset.mov);
   const ar = t.closest("[data-arr]"); if (ar) return editArrastre(ar.dataset.arr);
   const gn = t.closest("[data-gen]");
-  if (gn){ const m = iById(gn.dataset.gen), r = generarRentas(m, curYear); if (r.n) save(); toast(r.n ? `✓ ${r.n} ${plural(r.n, "renta añadida", "rentas añadidas")} de ${m.alias}.` : r.sin ? "Falta la renta mensual en el contrato." : "No hay rentas nuevas que añadir (ya estaban o aún no han llegado)."); return; }
+  if (gn){ const m = iById(gn.dataset.gen), r = generarRentas(m, curYear); if (r.n) save(); toast(r.n ? `✓ ${r.n} ${plural(r.n, "renta añadida", "rentas añadidas")} de ${m.alias}.${r.est ? ` Ojo: no hay subidas apuntadas en el contrato y he usado ${eur(r.est)} en todos los meses. Si en ${curYear} pagaban menos, sube el extracto del banco de ese año (sustituye estas rentas) o apunta la subida en el contrato.` : ""}` : r.sin ? "Falta la renta mensual en el contrato." : "No hay rentas nuevas que añadir (ya estaban o aún no han llegado)."); return; }
   const av = t.closest("[data-av]");
   if (av){ const a = $("v-resumen").__av[+av.dataset.av]?.go; if (!a) return; if (a.inm) editInm(a.inm); else if (a.ct) editCt(a.ct); else if (a.tab) go(a.tab); }
 });
@@ -1251,7 +1251,7 @@ function renderCuentas(){
 
 // Rentas mensuales a partir de los contratos (sin duplicar las que ya están)
 function generarRentas(m, y){
-  const hoy = todayIso(); let n = 0, sin = 0;
+  const hoy = todayIso(); let n = 0, sin = 0, est = null;
   for (const c of ctsOf(m)){
     for (let mes = 0; mes < 12; mes++){
       const dia = Math.min(28, Math.max(1, parseInt(String(c.diaPago || "1")) || 1));
@@ -1266,11 +1266,12 @@ function generarRentas(m, y){
       if (db.movs.some(x => x.inm === m.id && x.tipo === "ingreso" && x.cat === "renta" && x.origen !== "contrato" && x.fecha && Math.abs(toDate(x.fecha) - toDate(f)) <= 15 * DAY)) continue; // ya está la del banco
       const imp = rentaEn(c, f);
       if (!imp){ sin++; continue; }
+      if (!c.historial.some(x => x.desde <= f) && y < new Date().getFullYear()) est = imp; // mes pasado sin subidas apuntadas: uso la renta de hoy
       db.movs.push({ id:"g-" + uid(), key, ct:c.id, inm:m.id, tipo:"ingreso", cat:"renta", fecha:f, importe:imp, concepto:`Renta de ${MESES[mes]}`, proveedor:c.inquilinos.filter(q => q.nombre).map(q => q.nombre).join(" y "), origen:"contrato", docs:[] });
       n++;
     }
   }
-  return { n, sin };
+  return { n, sin, est };
 }
 // Apuntes repetidos de un año:
 // · rentas generadas desde el contrato que ya tienen su transferencia real del banco (se emparejan una a una, a ±20 días)
