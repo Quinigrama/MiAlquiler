@@ -1266,7 +1266,8 @@ function barrasAnios(m, ys){
 function renderComparar(){
   const el = $("v-comparar"); if (!el) return;
   const ys = [...new Set(db.movs.map(x => +x.fecha?.slice(0, 4)).filter(Boolean))].sort((a, b) => a - b);
-  if (ys.length < 2){ el.innerHTML = `<div class="panel"><div class="panel-head"><h2>📊 Comparar años</h2></div><div class="empty">Necesito apuntes de al menos dos años para comparar. Sube a la Bandeja los extractos del banco de cada año.</div></div>`; return; }
+  if (!ys.length){ el.innerHTML = `<div class="panel"><div class="panel-head"><h2>📊 Comparar años</h2></div><div class="empty">Todavía no hay apuntes. Sube a la Bandeja los extractos del banco de cada año.</div></div>`; return; }
+  if (ys.length < 2){ el.innerHTML = `<div class="panel"><div class="panel-head"><h2>📊 Comparar años</h2></div><div class="empty">Necesito apuntes de al menos dos años para comparar. Sube a la Bandeja los extractos del banco de otro año.</div></div>` + rentabilidadHtml(ys[0]) + previsionHtml(); return; }
   const posibles = ys.filter(y => ys.includes(y - 1));
   const hoyY = new Date().getFullYear();
   if (!posibles.includes(cmpYear)) cmpYear = posibles.filter(v => v < hoyY).at(-1) || posibles.at(-1) || ys.at(-1); // mejor un año entero
@@ -1306,10 +1307,70 @@ function renderComparar(){
   if (seg.length) h += `<div class="panel"><div class="panel-head"><h2>🛡️ Seguros</h2></div><ul class="mini">${seg.map(s => { const d = daysTo(s.renueva);
     return `<li style="align-items:flex-start"><div class="grow" style="white-space:normal"><b>${esc(iById(s.inm)?.alias || "")}</b> · ${eur(s.importe)}${s.antes ? ` <span class="sub">(antes ${eur(s.antes)}, ${pctTxt(s.pct)})</span> ${semaforo(s.pct, ipcDe(+s.fecha.slice(0, 4)), false)}` : ""}<div class="sub">${esc(s.concepto.slice(0, 60))}</div></div><span class="sub" style="white-space:nowrap">${d >= 0 ? `renueva el ${fdate(s.renueva)}` : `venció el ${fdate(s.renueva)}`}</span></li>`; }).join("")}</ul>
     <p class="note" style="margin-top:8px">Te aviso en el Resumen dos meses antes de cada renovación, para que pidas otros presupuestos si ha subido.</p></div>`;
-  el.innerHTML = h;
+  el.innerHTML = h + rentabilidadHtml(y) + previsionHtml();
+}
+// Rentabilidad de un año: lo que deja cada piso (ingresos − gastos pagados) y sobre cuánto vale
+function rentabilidadHtml(y){
+  const filas = db.inmuebles.map(m => { const S = sumas(m, y); return { m, ...S, queda:S.ing - S.gas }; }).filter(o => o.n);
+  if (!filas.length) return "";
+  const pctR = (v, base) => base > 0 ? `${fmt(v / base * 100, 1)} %` : "—";
+  const T = filas.reduce((a, o) => ({ ing:a.ing + o.ing, gas:a.gas + o.gas, queda:a.queda + o.queda }), { ing:0, gas:0, queda:0 });
+  return `<div class="panel"><div class="panel-head"><h2>💶 Lo que deja cada piso en ${y}</h2></div>
+    <div style="overflow-x:auto"><table class="tbl"><thead><tr><th class="l"></th><th class="num">Ingresos</th><th class="num">Gastos</th><th class="num">Queda</th><th class="num">Al mes</th></tr></thead><tbody>
+    ${filas.map(o => `<tr><td class="l">${esc(o.m.alias)}</td><td class="num">${eur(o.ing)}</td><td class="num">${eur(o.gas)}</td><td class="num">${eur(o.queda)}</td><td class="num"><b>${eur(o.queda / 12)}</b></td></tr>`).join("")}
+    ${filas.length > 1 ? `<tr class="tot"><td class="l">Total</td><td class="num">${eur(T.ing)}</td><td class="num">${eur(T.gas)}</td><td class="num">${eur(T.queda)}</td><td class="num">${eur(T.queda / 12)}</td></tr>` : ""}
+    </tbody></table></div>
+    <p class="note" style="margin:12px 0 6px"><b>Rentabilidad:</b> lo que queda al año dividido por lo que vale el piso. Escribe lo que valdría hoy cada uno (lo que os darían al venderlo). Si no, la calculo sobre lo que costó.</p>
+    <div style="display:grid;gap:8px">${filas.map(o => { const m = o.m, coste = (+m.adq?.precio || 0) + (+m.adq?.gastos || 0), base = +m.valor || coste;
+      return `<div class="rowline" style="grid-template-columns:1fr auto;align-items:center"><label class="field">${esc(m.alias)} · valor de hoy<input type="text" inputmode="decimal" class="money" data-valor="${m.id}" value="${m.valor ? fmt(m.valor) : ""}" placeholder="${coste ? "Costó " + eur(coste) : "Valor en €"}"></label>
+        <div style="text-align:right"><div class="sub">Bruta ${pctR(o.ing, base)}</div><div><b>Neta ${pctR(o.queda, base)}</b></div>${base && !m.valor ? `<div class="sub">sobre lo que costó</div>` : ""}</div></div>`; }).join("")}</div>
+    <p class="note" style="margin-top:8px">Para comparar: un depósito o una letra del Tesoro rinden alrededor de un 2–3 % sin trabajo ni riesgo de impago. Estas cifras son antes del IRPF y sin contar la amortización, que no es un pago.</p></div>`;
+}
+// Previsión del año que viene: rentas con la subida que toque y gastos fijos según la inflación
+function previsionHtml(){
+  const hoyY = new Date().getFullYear(), Y = hoyY + 1;
+  const base = [...new Set(db.movs.map(x => +x.fecha?.slice(0, 4)).filter(v => v && v < hoyY))].sort((a, b) => a - b).at(-1);
+  const ipcP = db.ipcPrev != null ? +db.ipcPrev : (ipcDe(hoyY) ?? ipcDe(hoyY - 1) ?? 2.5);
+  const FIJOS = new Set(["comunidad", "ibi", "tasas", "seguro", "servicios", "suministros", "intereses"]);
+  const filas = [];
+  for (const m of db.inmuebles){
+    // Rentas: la de hoy y, desde el aniversario, la subida prevista
+    let rentas = 0, nota = "";
+    for (const c of ctsOf(m).filter(c => c.estado === "vigente")){
+      let r = rentaEn(c, todayIso()) || 0;
+      if (!r){ const u = db.movs.filter(x => x.inm === m.id && x.tipo === "ingreso" && x.cat === "renta").sort((a, b) => b.fecha.localeCompare(a.fecha))[0]; r = u ? +u.importe : 0; }
+      if (!r) continue;
+      const ref = c.actRef || c.inicio, sube = c.indice !== "ninguno" && ref;
+      const aniv = sube ? `${Y}${ref.slice(4)}` : null, dia = String(Math.min(28, parseInt(c.diaPago) || 1)).padStart(2, "0");
+      const rNueva = Math.round(r * (1 + ipcP / 100) * 100) / 100;
+      for (let k = 1; k <= 12; k++){ const f = `${Y}-${String(k).padStart(2, "0")}-${dia}`; rentas += aniv && f >= aniv ? rNueva : r; }
+      if (aniv) nota = `${eur(r)} al mes; desde el ${fdate(aniv)}, unos ${eur(rNueva)}`;
+      else nota = `${eur(r)} al mes`;
+    }
+    // Gastos fijos del último año entero, con la inflación de los años que pasan
+    let fijos = 0, rep = 0;
+    if (base){
+      const S = sumas(m, base), f = Math.pow(1 + ipcP / 100, Y - base);
+      for (const [k, v] of S.g) if (FIJOS.has(k)) fijos += v * f;
+      const ys = [base - 2, base - 1, base].filter(v => movsOf(v, m.id).length);
+      rep = ys.length ? ys.reduce((a, v) => a + (sumas(m, v).g.get("reparacion") || 0), 0) / ys.length : 0;
+    }
+    if (rentas || fijos) filas.push({ m, rentas, fijos, rep, queda:rentas - fijos - rep, nota });
+  }
+  if (!filas.length) return "";
+  const T = filas.reduce((a, o) => ({ rentas:a.rentas + o.rentas, fijos:a.fijos + o.fijos, rep:a.rep + o.rep, queda:a.queda + o.queda }), { rentas:0, fijos:0, rep:0, queda:0 });
+  return `<div class="panel"><div class="panel-head"><h2>🔮 Previsión de ${Y}</h2></div>
+    <div class="fields" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))"><label class="field">Inflación prevista (%)<input type="text" inputmode="decimal" id="ipcPrev" value="${fmt(ipcP, 1)}"></label></div>
+    <div style="overflow-x:auto;margin-top:10px"><table class="tbl"><thead><tr><th class="l"></th><th class="num">Rentas</th><th class="num">Gastos fijos</th><th class="num">Reparaciones</th><th class="num">Queda</th></tr></thead><tbody>
+    ${filas.map(o => `<tr><td class="l">${esc(o.m.alias)}${o.nota ? `<div class="sub">${o.nota}</div>` : ""}</td><td class="num">${eur(o.rentas)}</td><td class="num">${eur(o.fijos)}</td><td class="num">${eur(o.rep)}</td><td class="num"><b>${eur(o.queda)}</b></td></tr>`).join("")}
+    ${filas.length > 1 ? `<tr class="tot"><td class="l">Total · ${eur(T.queda / 12)} al mes</td><td class="num">${eur(T.rentas)}</td><td class="num">${eur(T.fijos)}</td><td class="num">${eur(T.rep)}</td><td class="num">${eur(T.queda)}</td></tr>` : ""}
+    </tbody></table></div>
+    <p class="note" style="margin-top:8px">Rentas: la de hoy de cada contrato, con la subida en su aniversario según la inflación prevista (si el contrato va con el IRAV o un tope legal, puede ser menos). Gastos fijos: comunidad, IBI, tasas, seguros y servicios de ${base || "—"}, subidos con la inflación. Reparaciones: la media de los últimos años, como colchón. No incluye derramas ni compras nuevas.</p></div>`;
 }
 document.addEventListener("change", e => {
   if (e.target.id === "cmpYear"){ cmpYear = +e.target.value; renderComparar(); }
+  if (e.target.dataset?.valor){ const m = iById(e.target.dataset.valor); if (m){ const v = parseEs(e.target.value); m.valor = isNaN(v) ? null : v; save(); } return; }
+  if (e.target.id === "ipcPrev"){ const v = parseEs(e.target.value); db.ipcPrev = isNaN(v) ? null : v; save(); return; }
   if (e.target.id === "cmpIpc"){ const v = parseEs(e.target.value); db.ipc ||= {}; if (isNaN(v)) delete db.ipc[cmpYear]; else db.ipc[cmpYear] = v; save(); }
 });
 // Buscador de apuntes en todos los años (concepto, proveedor, notas, NIF, nº de factura, nombre del documento, categoría)
