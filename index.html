@@ -3182,6 +3182,28 @@ const GD = (() => {
   const keepTok = () => { try { localStorage.setItem(K.tok, JSON.stringify({ t:token, exp })); } catch(e){} };
   const dropTok = () => { token = null; exp = 0; try { localStorage.removeItem(K.tok); } catch(e){} };
   try { const r = localStorage.getItem(K.root); if (r) folders.set("/" + ROOT, r); } catch(e){}
+  // Conectar sin ventana emergente: la app va a Google y Google la devuelve aquí con el permiso en la dirección (#access_token=…)
+  const volver = () => location.origin + location.pathname.replace(/index\.html$/, "");
+  let vuelta = null;
+  try {
+    const h = new URLSearchParams(location.hash.slice(1));
+    if (h.has("access_token") || h.has("error")){
+      const okState = h.get("state") && h.get("state") === sessionStorage.getItem("miAlquilerDrive:state");
+      sessionStorage.removeItem("miAlquilerDrive:state");
+      history.replaceState(null, "", location.pathname + location.search);
+      if (!okState) vuelta = { err:"Google ha devuelto un permiso que no esperaba. Vuelve a intentarlo." };
+      else if (h.get("error")) vuelta = { err:h.get("error") === "access_denied" ? "No has dado permiso en Google." : "Google respondió: " + h.get("error") };
+      else if (!/drive\.file/.test(h.get("scope") || "")) vuelta = { err:"Google no ha dado permiso para Drive: marca la casilla de Google Drive en la pantalla de permisos." };
+      else { token = h.get("access_token"); exp = Date.now() + (+h.get("expires_in") || 3600) * 1000; keepTok(); localStorage.setItem(K.on, "1"); vuelta = { ok:true }; }
+    }
+  } catch(e){}
+  function irAGoogle(){
+    const st = Math.random().toString(36).slice(2); try { sessionStorage.setItem("miAlquilerDrive:state", st); } catch(e){}
+    const u = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    const who = LS.get(K.who, "");
+    Object.entries({ client_id:CLIENT_ID, redirect_uri:volver(), response_type:"token", scope:SCOPE, include_granted_scopes:"true", prompt:"consent", state:st, ...(who ? { login_hint:who } : {}) }).forEach(([k, v]) => u.searchParams.set(k, v));
+    location.href = u.toString();
+  }
   let queue = (() => { try { return JSON.parse(LS.get(K.q, "[]")) || []; } catch(e){ return []; } })(); // [{doc, ct}]
   const saveQueue = () => LS.set(K.q, JSON.stringify(queue));
   const fail = (code, msg) => Object.assign(new Error(msg || code), { code });
@@ -3413,7 +3435,10 @@ const GD = (() => {
         <div class="toolbar"><button type="button" class="primary" data-gd="sync"${busy ? " disabled" : ""}>⇅ Sincronizar ahora</button><button type="button" class="ghost" data-gd="off"${busy ? " disabled" : ""}>Desconectar</button></div>`;
     }
     const msg = working || last.msg;
-    box.innerHTML = h + `<p class="note st${working ? "" : last.kind ? " " + last.kind : ""}" aria-live="polite">${esc(msg || "")}</p>`;
+    const plan = hosted && !working && last.kind === "err" && !hasToken() ? `<div class="choice" style="margin-top:8px"><p style="margin:0"><strong>¿La ventana de Google se cierra sola?</strong> Prueba a conectar sin ventana: la app se va a Google y vuelve sola cuando des el permiso.</p>
+      <div class="toolbar"><button type="button" class="primary" data-gd="redir">🔁 Conectar sin ventana emergente</button></div>
+      <p class="note" style="margin:0">Si Google muestra «Error 400: redirect_uri_mismatch», hay que añadir <code>${esc(volver())}</code> en Google Cloud → APIs y servicios → Credenciales → tu cliente OAuth → «URIs de redireccionamiento autorizados».</p></div>` : "";
+    box.innerHTML = h + `<p class="note st${working ? "" : last.kind ? " " + last.kind : ""}" aria-live="polite">${esc(msg || "")}</p>` + plan;
   }
   function mount(){
     $("driveChip").onclick = () => { if (on()) sync({ interactive:true }); else { go("datos"); render(); } };
@@ -3421,10 +3446,13 @@ const GD = (() => {
       const a = e.target.closest("[data-gd]"); if (!a) return;
       const k = a.dataset.gd;
       if (k === "sync") sync({ interactive:true });
+      else if (k === "redir") irAGoogle();
       else if (k === "off") disconnect();
     });
     render();
     if (hosted) loadGis().then(initClient).catch(() => {});
+    if (vuelta?.err){ go("datos"); say(vuelta.err, "err"); }
+    else if (vuelta?.ok){ go("datos"); say("Conectado con Google.", "ok"); }
     if (hosted && on() && hasToken()) setTimeout(() => sync(), 500); // con permiso vigente, sincroniza al abrir
   }
   // Hoja de Google: se sube el Excel y Drive lo convierte; para traerla, se exporta otra vez a Excel
