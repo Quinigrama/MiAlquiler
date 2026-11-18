@@ -3174,6 +3174,7 @@ const GD = (() => {
                set:(k, v) => { try { localStorage.setItem(k, v); } catch(e){} }, del:k => { try { localStorage.removeItem(k); } catch(e){} } };
   const hosted = location.protocol === "https:" && /github\.io$/.test(location.hostname);
   let token = null, exp = 0, tc = null, pend = null, busy = false, timer = null, applying = false, again = false;
+  let forceConsent = false; // tras un intento fallido, la siguiente ventana de Google enseña otra vez la casilla de permiso
   let last = { msg:"", kind:"" };
   const folders = new Map();
   // El permiso de Google dura una hora: se recuerda en el aparato para no pedirlo cada vez que abres la app
@@ -3200,18 +3201,24 @@ const GD = (() => {
   function initClient(){
     if (tc || !window.google?.accounts?.oauth2) return;
     tc = google.accounts.oauth2.initTokenClient({ client_id:CLIENT_ID, scope:SCOPE,
-      callback: r => { const p = pend; pend = null; if (!p) return;
-        if (r.error || !r.access_token) return p.ko(fail("denied"));
-        if (google.accounts.oauth2.hasGrantedAllScopes && !google.accounts.oauth2.hasGrantedAllScopes(r, SCOPE)) return p.ko(fail("scope"));
-        token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000; keepTok(); LS.set(K.on, "1"); p.ok(token); },
-      error_callback: e => { const p = pend; pend = null; p && p.ko(fail(e && e.type === "popup_closed" ? "closed" : "denied")); } });
+      callback: r => { const p = pend; pend = null; clearTimeout(cierre);
+        if (r.error || !r.access_token){ forceConsent = true; return p && p.ko(fail("denied")); }
+        if (google.accounts.oauth2.hasGrantedAllScopes && !google.accounts.oauth2.hasGrantedAllScopes(r, SCOPE)){ forceConsent = true; return p && p.ko(fail("scope")); }
+        forceConsent = false;
+        token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000; keepTok(); LS.set(K.on, "1");
+        if (p) p.ok(token); else setTimeout(() => sync(), 100); }, // el permiso llegó tarde (la ventana ya se dio por cerrada): se usa igual
+      // En el móvil, Google a veces avisa de «ventana cerrada» antes de mandar el permiso: espero un poco antes de darlo por perdido
+      error_callback: e => { const closed = e && e.type === "popup_closed"; clearTimeout(cierre);
+        cierre = setTimeout(() => { const p = pend; pend = null; forceConsent = true; p && p.ko(fail(closed ? "closed" : e && e.type === "popup_failed_to_open" ? "blocked" : "denied")); }, closed ? 2500 : 0); } });
   }
+  let cierre = null;
+  // Tiene que llamarse directamente desde un toque: Google abre una ventanita
   function askToken(){
     if (hasToken()) return Promise.resolve(token);
     if (!tc) return Promise.reject(fail("gis"));
     return new Promise((ok, ko) => {
-      if (pend) pend.ko(fail("closed")); pend = { ok, ko };
-      const o = { prompt: on() ? "" : "consent" }; const who = LS.get(K.who, ""); if (who) o.hint = who;
+      if (pend) pend.ko(fail("closed")); pend = { ok, ko }; clearTimeout(cierre);
+      const o = { prompt: on() && !forceConsent ? "" : "consent" }; const who = LS.get(K.who, ""); if (who && !forceConsent) o.hint = who;
       tc.requestAccessToken(o);
     });
   }
@@ -3327,8 +3334,13 @@ const GD = (() => {
     if (!hosted) return;
     if (busy){ again = true; return; } // si llega un cambio mientras sincroniza, se repite al acabar
     if (interactive){
-      try { await loadGis(); initClient(); await askToken(); }
-      catch(e){ say(e.code === "closed" ? "Has cerrado la ventana de Google sin conectar." : e.code === "net" || e.code === "gis" ? "No se ha podido cargar el acceso de Google. Revisa la conexión." : "Google no ha dado permiso para usar Drive.", "err"); return; }
+      if (pend) return; // ya hay una ventana de Google abierta
+      try { if (!window.google?.accounts?.oauth2) await loadGis(); initClient(); await askToken(); } // sin esperas antes de abrir la ventana: el navegador solo la deja abrir justo tras el toque
+      catch(e){ say(e.code === "closed" ? "La ventana de Google se cerró sin dar permiso. Vuelve a tocar «Sincronizar»: esta vez te enseñará la pantalla de permisos completa."
+        : e.code === "scope" ? "Google no ha dado permiso para Drive: en la ventana de Google hay que marcar la casilla de Google Drive («Ver, editar, crear y eliminar solo los archivos… que uses con esta aplicación»). Vuelve a tocar «Sincronizar» y márcala."
+        : e.code === "blocked" ? "El navegador ha bloqueado la ventana de Google. Permite las ventanas emergentes para esta web y vuelve a tocar «Sincronizar»."
+        : e.code === "net" || e.code === "gis" ? "No se ha podido cargar el acceso de Google. Revisa la conexión."
+        : "Google no ha dado permiso para usar Drive. Vuelve a tocar «Sincronizar»: te enseñará la pantalla de permisos completa.", "err"); return; }
     } else if (!hasToken()) return render();
     busy = true; clearTimeout(timer); render("Sincronizando con Drive…");
     try {
@@ -3365,7 +3377,7 @@ const GD = (() => {
   }
   // Al irte de la app se sube lo pendiente; al volver a ella (o recuperar internet) se trae lo último
   addEventListener("visibilitychange", () => {
-    if (!on() || !hasToken()) return render();
+    if (!on() || !hasToken() || pend) return render();
     if (document.visibilityState === "hidden"){ if (timer || changed()){ clearTimeout(timer); sync(); } }
     else if (Date.now() - (getSt().at || 0) > 15000) sync();
   });
