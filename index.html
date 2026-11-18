@@ -436,7 +436,7 @@ function normalize(d){
   d.titulares ||= []; d.inmuebles ||= []; d.contratos ||= []; d.declaracion ||= { tipo:"conjunta", miembros:d.titulares.map(t => t.id) };
   for (const m of d.inmuebles){ m.tit ||= []; m.adq ||= {}; m.cat ||= {}; }
   for (const c of d.contratos){ c.inquilinos ||= []; c.historial ||= []; c.fianza ||= {}; c.docs ||= []; c.cartas ||= []; c.prorrogas ||= []; }
-  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.reglasBanco = (d.reglasBanco || []).filter(r => !(r.texto === "LAS PEDRONERAS 10" && r.cat === "ibi")); // esa regla cogía también los recibos de comunidad d.archivo ||= []; d.bienes ||= [];
+  d.movs ||= []; d.arrastres ||= {}; d.reglas ||= []; d.reglasBanco = (d.reglasBanco || []).filter(r => !(r.texto === "LAS PEDRONERAS 10" && r.cat === "ibi")); d.archivo ||= []; d.bienes ||= []; // (esa regla cogía también los recibos de comunidad)
   for (const m of d.inmuebles){ m.accesorios ||= []; m.docs ||= []; if (!m.amort && /ya no se amortiza/i.test(m.notas || "")) m.amort = { completo:true }; }
   for (const x of d.movs) x.docs ||= [];
   return d;
@@ -3129,18 +3129,58 @@ armDelete($("wipe"), async () => {
 // Google Drive: tus datos en MiAlquiler/mi-alquiler-datos.json y los documentos en MiAlquiler/<inmueble>/Contratos
 // El permiso drive.file solo deja ver los archivos que crea esta app, nada más de tu Drive.
 // =====================================================================
+// Mezcla a tres bandas: base = lo último común, L = este aparato, R = Drive.
+// Lo que solo cambió en un lado se queda con ese cambio (también los borrados); si cambió distinto en los dos, gana este aparato.
+function mezclar3(B, L, R){
+  let conflictos = 0;
+  const J = v => JSON.stringify(v), eq = (a, b) => J(a) === J(b);
+  const conId = a => Array.isArray(a) && a.length && a.every(x => x && typeof x === "object" && !Array.isArray(x) && x.id != null);
+  const obj = v => v && typeof v === "object" && !Array.isArray(v);
+  function m(b, l, r, k){
+    if (eq(l, r)) return l;
+    if (eq(l, b)) return r;
+    if (eq(r, b)) return l;
+    if (k === "updated" || k === "at") return Math.max(+l || 0, +r || 0);
+    if ((conId(l) || !l?.length) && (conId(r) || !r?.length) && Array.isArray(l) && Array.isArray(r) && (conId(l) || conId(r))){
+      const bm = new Map((Array.isArray(b) ? b : []).filter(x => x?.id != null).map(x => [x.id, x])), rm = new Map(r.map(x => [x.id, x])), lm = new Map(l.map(x => [x.id, x])), out = [];
+      for (const x of l){
+        if (rm.has(x.id)) out.push(m(bm.get(x.id), x, rm.get(x.id)));
+        else if (!bm.has(x.id) || !eq(x, bm.get(x.id))) out.push(x);  // nuevo aquí, o cambiado aquí aunque allí se borrase
+      }
+      for (const x of r) if (!lm.has(x.id) && (!bm.has(x.id) || !eq(x, bm.get(x.id)))) out.push(x);
+      return out;
+    }
+    if (obj(l) && obj(r)){
+      const bo = obj(b) ? b : {}, out = {};
+      for (const key of new Set([...Object.keys(l), ...Object.keys(r)])){
+        const v = m(bo[key], l[key], r[key], key);
+        if (v !== undefined) out[key] = v;
+      }
+      return out;
+    }
+    conflictos++; return l;
+  }
+  const v = m(B, L, R);
+  return { v, conflictos };
+}
+const renderApp = () => render();
 const GD = (() => {
   const CLIENT_ID = "775415077551-v99g3415vpmd6vra392smfmv0q8meav3.apps.googleusercontent.com"; // el mismo de Mi Renta y Mi Voz (misma web: quinigrama.github.io)
   const SCOPE = "https://www.googleapis.com/auth/drive.file";
   const API = "https://www.googleapis.com/drive/v3", UPL = "https://www.googleapis.com/upload/drive/v3";
   const ROOT = "MiAlquiler", DATA = "mi-alquiler-datos.json";
-  const K = { on:"miAlquilerDrive:on", who:"miAlquilerDrive:who", st:"miAlquilerDrive:state", chg:"miAlquilerDrive:chg", q:"miAlquilerDrive:queue", sheet:"miAlquilerDrive:sheet" };
+  const K = { on:"miAlquilerDrive:on", who:"miAlquilerDrive:who", st:"miAlquilerDrive:state", chg:"miAlquilerDrive:chg", q:"miAlquilerDrive:queue", sheet:"miAlquilerDrive:sheet", tok:"miAlquilerDrive:tok", root:"miAlquilerDrive:root" };
   const LS = { get:(k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch(e){ return d; } },
                set:(k, v) => { try { localStorage.setItem(k, v); } catch(e){} }, del:k => { try { localStorage.removeItem(k); } catch(e){} } };
   const hosted = location.protocol === "https:" && /github\.io$/.test(location.hostname);
-  let token = null, exp = 0, tc = null, pend = null, busy = false, timer = null, applying = false, choice = null;
+  let token = null, exp = 0, tc = null, pend = null, busy = false, timer = null, applying = false, again = false;
   let last = { msg:"", kind:"" };
   const folders = new Map();
+  // El permiso de Google dura una hora: se recuerda en el aparato para no pedirlo cada vez que abres la app
+  try { const t = JSON.parse(localStorage.getItem(K.tok) || "null"); if (t && t.exp > Date.now() + 60000){ token = t.t; exp = t.exp; } } catch(e){}
+  const keepTok = () => { try { localStorage.setItem(K.tok, JSON.stringify({ t:token, exp })); } catch(e){} };
+  const dropTok = () => { token = null; exp = 0; try { localStorage.removeItem(K.tok); } catch(e){} };
+  try { const r = localStorage.getItem(K.root); if (r) folders.set("/" + ROOT, r); } catch(e){}
   let queue = (() => { try { return JSON.parse(LS.get(K.q, "[]")) || []; } catch(e){ return []; } })(); // [{doc, ct}]
   const saveQueue = () => LS.set(K.q, JSON.stringify(queue));
   const fail = (code, msg) => Object.assign(new Error(msg || code), { code });
@@ -3163,7 +3203,7 @@ const GD = (() => {
       callback: r => { const p = pend; pend = null; if (!p) return;
         if (r.error || !r.access_token) return p.ko(fail("denied"));
         if (google.accounts.oauth2.hasGrantedAllScopes && !google.accounts.oauth2.hasGrantedAllScopes(r, SCOPE)) return p.ko(fail("scope"));
-        token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000; LS.set(K.on, "1"); p.ok(token); },
+        token = r.access_token; exp = Date.now() + (+r.expires_in || 3600) * 1000; keepTok(); LS.set(K.on, "1"); p.ok(token); },
       error_callback: e => { const p = pend; pend = null; p && p.ko(fail(e && e.type === "popup_closed" ? "closed" : "denied")); } });
   }
   function askToken(){
@@ -3178,7 +3218,8 @@ const GD = (() => {
   async function api(url, opt = {}){
     if (!hasToken()) throw fail("auth");
     let r; try { r = await fetch(url, { ...opt, headers:{ ...(opt.headers || {}), Authorization:"Bearer " + token } }); } catch(e){ throw fail("net"); }
-    if (r.status === 401){ token = null; throw fail("auth"); }
+    if (r.status === 401){ dropTok(); throw fail("auth"); }
+    if (r.status === 404) throw fail("gone");
     if (r.status === 403 && /storageQuotaExceeded/.test(await r.clone().text().catch(() => ""))) throw fail("full");
     if (!r.ok) throw fail("http", "Drive respondió " + r.status);
     return r;
@@ -3194,6 +3235,7 @@ const GD = (() => {
       if (!id){ const r = await api(API + "/files?fields=id", { method:"POST", headers:{ "Content-Type":"application/json; charset=UTF-8" },
         body:JSON.stringify({ name, mimeType:"application/vnd.google-apps.folder", ...(parent ? { parents:[parent] } : {}) }) }); id = (await r.json()).id; }
       folders.set(key, id); parent = id;
+      if (key === "/" + ROOT) LS.set(K.root, id);
     }
     return parent;
   }
@@ -3206,44 +3248,60 @@ const GD = (() => {
   async function whoAmI(){ try { const u = (await (await api(API + "/about?fields=user(emailAddress)")).json()).user; if (u?.emailAddress) LS.set(K.who, u.emailAddress); } catch(e){} }
 
   const hasLocalData = () => todosLosDatos().some(u => u.data && !u.data.seed);
-  const dataBlob = () => { persist(); return new Blob([JSON.stringify({ app:"miAlquiler", v:2, at:new Date().toISOString(), users:users.list, datos:todosLosDatos() })], { type:"application/json" }); };
+  const localDatos = () => { persist(); return JSON.parse(JSON.stringify(todosLosDatos())); };
+  const blobDe = datos => new Blob([JSON.stringify({ app:"miAlquiler", v:2, at:new Date().toISOString(), users:datos.map(x => ({ id:x.id, name:x.name })), datos })], { type:"application/json" });
+  const dataBlob = () => blobDe(localDatos());
+  // Lo último que este aparato y Drive tenían en común: sirve para saber quién cambió qué (y que lo borrado siga borrado)
+  const BASE = "__drive_base__";
+  const getBase = async () => { try { const b = await IDB.get(BASE); return b ? JSON.parse(await b.text()) : null; } catch(e){ return null; } };
+  const setBase = datos => IDB.put(BASE, new Blob([JSON.stringify(datos)], { type:"application/json" })).catch(() => {});
   async function readRemote(rem){
     let d; try { d = await (await api(API + "/files/" + rem.id + "?alt=media")).json(); } catch(e){ if (e.code) throw e; d = null; }
     if (!d || d.app !== "miAlquiler" || !(d.data || d.datos)) throw fail("bad");
-    return d;
+    return d.datos || [{ id:users.list[0]?.id || "u1", name:users.list[0]?.name || "Yo", data:d.data }];
   }
-  async function takeRemote(rem){
-    const d = await readRemote(rem);
+  function aplicar(datos){
     applying = true;
-    try { if (d.datos) aplicarTodos(d.datos); else { db = normalize(d.data); persist(); } render(); } finally { applying = false; }
-    const now = Date.now(); LS.set(K.chg, now); setSt({ id:rem.id, mod:rem.modifiedTime, at:now });
-    return "Traído de Drive.";
+    try { aplicarTodos(datos); renderApp(); render(); } finally { applying = false; } // renderApp: la pantalla de la app (dentro de GD, «render» es el del botón de Drive)
   }
-  async function putLocal(rem, root){
-    const r = await upload(rem?.id, rem ? {} : { name:DATA, parents:[root] }, dataBlob(), "application/json");
-    setSt({ id:r.id, mod:r.modifiedTime, at:Date.now() });
-    return "Datos guardados en Drive.";
+  // El archivo de datos: si ya sé su id, una sola consulta; si no, lo busco en la carpeta
+  async function remoteMeta(){
+    const st = getSt();
+    if (st.id){
+      try { const r = await (await api(API + "/files/" + st.id + "?fields=id,modifiedTime,size,trashed")).json(); if (!r.trashed) return { rem:r, root:null }; }
+      catch(e){ if (e.code !== "gone") throw e; }
+    }
+    let root = await folderId([ROOT]), rem;
+    try { rem = (await list("name=" + q(DATA) + " and " + q(root) + " in parents and trashed=false", "id,modifiedTime,size"))[0]; }
+    catch(e){ if (e.code !== "gone") throw e; folders.clear(); LS.del(K.root); root = await folderId([ROOT]); rem = (await list("name=" + q(DATA) + " and " + q(root) + " in parents and trashed=false", "id,modifiedTime,size"))[0]; }
+    return { rem, root };
+  }
+  async function subir(rem, root, datos){
+    if (!rem && !root) root = await folderId([ROOT]);
+    const r = await upload(rem?.id, rem ? {} : { name:DATA, parents:[root] }, blobDe(datos), "application/json");
+    setSt({ id:r.id, mod:r.modifiedTime, at:Date.now() }); await setBase(datos);
   }
   async function syncData(){
-    const root = await folderId([ROOT]);
-    const rem = (await list("name=" + q(DATA) + " and " + q(root) + " in parents and trashed=false", "id,modifiedTime,size"))[0];
+    const { rem, root } = await remoteMeta();
     const st = getSt(), mine = changed(), theirs = !!rem && rem.modifiedTime !== st.mod;
-    if (theirs && !mine) return takeRemote(rem);
-    if (theirs && mine){
-      if (!st.mod && !hasLocalData()) return takeRemote(rem); // aparato nuevo sin datos: manda Drive
-      choice = { rem, root }; return null;
+    if (theirs){
+      const remoto = await readRemote(rem);
+      if (!mine || !hasLocalData()){
+        aplicar(remoto);
+        const now = Date.now(); LS.set(K.chg, now); setSt({ id:rem.id, mod:rem.modifiedTime, at:now }); await setBase(remoto);
+        return "Traído lo último de Drive.";
+      }
+      // Cambios en los dos lados: se juntan registro a registro
+      const base = await getBase(), local = localDatos(), M = mezclar3(base || [], local, remoto);
+      if (M.conflictos){
+        try { await api(API + "/files/" + rem.id + "/copy?fields=id", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ name:"mi-alquiler-datos-drive-" + stamp() + ".json", parents:[root || await folderId([ROOT])] }) }); } catch(e){}
+      }
+      aplicar(M.v); LS.set(K.chg, Date.now());
+      await subir(rem, root, M.v);
+      return `He juntado los cambios de este aparato con los de Drive.${M.conflictos ? ` En ${M.conflictos} ${plural(M.conflictos, "dato cambiado", "datos cambiados")} en los dos sitios me he quedado con lo de este aparato (la versión de Drive queda guardada como copia).` : ""}`;
     }
-    if (mine || !rem) return putLocal(rem, root);
-    return "Datos al día con Drive.";
-  }
-  async function resolve(keep){
-    const { rem, root } = choice; choice = null;
-    if (keep === "drive"){
-      await upload(null, { name:"mi-alquiler-datos-este-aparato-" + stamp() + ".json", parents:[root] }, dataBlob(), "application/json");
-      return (await takeRemote(rem)) + " Lo que tenías en este aparato queda guardado en Drive como copia.";
-    }
-    await api(API + "/files/" + rem.id + "/copy?fields=id", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ name:"mi-alquiler-datos-drive-" + stamp() + ".json", parents:[root] }) });
-    return (await putLocal(rem, root)) + " La versión que había en Drive queda guardada como copia.";
+    if (mine || !rem){ await subir(rem, root, localDatos()); return "Cambios guardados en Drive."; }
+    return "Todo al día con Drive.";
   }
   // Documentos: se suben una vez (se reconocen por su huella) y se apunta su id de Drive en el contrato
   async function putDoc(item){
@@ -3265,8 +3323,9 @@ const GD = (() => {
     while (queue.length){ render(`Subiendo documentos a Drive… (${queue.length})`); if (await putDoc(queue[0])) n++; queue.shift(); saveQueue(); }
     return n;
   }
-  async function sync({ interactive, keep } = {}){
-    if (!hosted || busy) return;
+  async function sync({ interactive } = {}){
+    if (!hosted) return;
+    if (busy){ again = true; return; } // si llega un cambio mientras sincroniza, se repite al acabar
     if (interactive){
       try { await loadGis(); initClient(); await askToken(); }
       catch(e){ say(e.code === "closed" ? "Has cerrado la ventana de Google sin conectar." : e.code === "net" || e.code === "gis" ? "No se ha podido cargar el acceso de Google. Revisa la conexión." : "Google no ha dado permiso para usar Drive.", "err"); return; }
@@ -3274,14 +3333,13 @@ const GD = (() => {
     busy = true; clearTimeout(timer); render("Sincronizando con Drive…");
     try {
       if (!LS.get(K.who)) await whoAmI();
-      let m1 = keep ? await resolve(keep) : await syncData();
-      let n = 0;
-      if (!choice){ n = await flushDocs(); if (n) m1 = await syncData() || m1; } // los ids de Drive de los documentos también se guardan
+      let m1 = await syncData();
+      const n = await flushDocs(); if (n) await syncData(); // los ids de Drive de los documentos también se guardan
       busy = false;
-      if (choice) say("", "");
-      else { say([m1, n ? `${n} ${plural(n, "documento guardado", "documentos guardados")} en ${ROOT}.` : ""].filter(Boolean).join(" "), "ok"); render(); }
+      say([m1, n ? `${n} ${plural(n, "documento guardado", "documentos guardados")} en ${ROOT}.` : ""].filter(Boolean).join(" "), "ok");
+      if (again){ again = false; if (changed()) setTimeout(() => sync(), 300); }
     } catch(e){
-      busy = false;
+      busy = false; again = false;
       say(e.code === "auth" ? "La conexión con Google ha caducado. Toca «Sincronizar» para seguir."
         : e.code === "net" ? "Sin conexión con Google. Toca «Sincronizar» cuando vuelvas a tener conexión."
         : e.code === "full" ? "Tu Google Drive está lleno: no cabe la copia."
@@ -3294,7 +3352,7 @@ const GD = (() => {
     LS.set(K.chg, Date.now());
     if (!on()) return;
     render();
-    if (hasToken()){ clearTimeout(timer); timer = setTimeout(() => sync(), 8000); }
+    if (hasToken()){ clearTimeout(timer); timer = setTimeout(() => sync(), 3000); }
   }
   function addDoc(d, c){
     if (!hosted || !on()) return false;
@@ -3305,10 +3363,19 @@ const GD = (() => {
     if (!hasToken()) return null;
     return (await api(API + "/files/" + id + "?alt=media")).blob();
   }
-  addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && timer && hasToken()){ clearTimeout(timer); sync(); } });
+  // Al irte de la app se sube lo pendiente; al volver a ella (o recuperar internet) se trae lo último
+  addEventListener("visibilitychange", () => {
+    if (!on() || !hasToken()) return render();
+    if (document.visibilityState === "hidden"){ if (timer || changed()){ clearTimeout(timer); sync(); } }
+    else if (Date.now() - (getSt().at || 0) > 15000) sync();
+  });
+  addEventListener("online", () => { if (on() && hasToken()) sync(); else render(); });
+  // Con la app abierta (por ejemplo en el PC), mira cada minuto si hay algo nuevo en Drive: es una consulta pequeña
+  setInterval(() => { if (document.visibilityState === "visible" && on() && hasToken() && !busy && navigator.onLine && Date.now() - (getSt().at || 0) > 60000) sync(); }, 30000);
+  addEventListener("offline", () => render());
   function disconnect(){
     try { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); } catch(e){}
-    token = null; folders.clear(); choice = null; LS.del(K.on); LS.del(K.who); LS.del(K.st); clearTimeout(timer);
+    dropTok(); folders.clear(); LS.del(K.on); LS.del(K.who); LS.del(K.st); LS.del(K.root); IDB.del(BASE).catch(() => {}); clearTimeout(timer);
     say("Desconectado de Google Drive. Tus archivos siguen en la carpeta " + ROOT + " de tu Drive.", "");
   }
   function say(msg, kind){ last = { msg, kind }; render(); }
@@ -3316,8 +3383,9 @@ const GD = (() => {
     const chip = $("driveChip"), box = $("driveBox"); if (!chip || !box) return;
     const isOn = on(), who = LS.get(K.who, ""), pendingUp = isOn && (changed() || queue.length);
     chip.hidden = !hosted;
-    chip.className = "drivechip" + (busy || !isOn ? "" : !hasToken() || pendingUp || choice ? " warn" : "");
-    chip.textContent = busy ? "☁️ Sincronizando…" : !isOn ? "☁️ Conectar Drive" : choice ? "☁️ Elige qué datos quedan" : !hasToken() ? "☁️ Toca para sincronizar" : pendingUp ? "☁️ Cambios por subir" : "☁️ Drive al día";
+    const off = !navigator.onLine;
+    chip.className = "drivechip" + (busy || !isOn ? "" : !hasToken() || pendingUp || off ? " warn" : "");
+    chip.textContent = busy ? "☁️ Sincronizando…" : !isOn ? "☁️ Conectar Drive" : off ? "☁️ Sin internet" : !hasToken() ? "☁️ Toca para traer lo último" : pendingUp ? "☁️ Subiendo cambios…" : "☁️ Drive al día ✓";
     chip.disabled = busy;
     let h = "";
     if (!hosted){
@@ -3329,26 +3397,23 @@ const GD = (() => {
       const st = getSt();
       h = `<p class="note">${who ? `Conectado como <strong>${esc(who)}</strong>. ` : "Conectado. "}Datos: ${ROOT}/${DATA}.${st.at ? ` Última sincronización: ${new Date(st.at).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" })}.` : ""}</p>
         ${queue.length ? `<p class="note">${queue.length} ${plural(queue.length, "documento esperando", "documentos esperando")} para subir.</p>` : ""}
-        <p class="note">Al abrir la app, toca «Sincronizar» para traer lo último. Mientras la tengas abierta, los cambios se suben solos.</p>
-        ${choice ? `<div class="choice"><p style="margin:0"><strong>Hay cambios en este aparato y en Drive.</strong> ¿Con cuáles te quedas? La otra versión se guarda como copia en Drive, no se pierde nada.</p>
-          <div class="toolbar"><button type="button" class="primary" data-gd="keep-here">Los de este aparato</button><button type="button" data-gd="keep-drive">Los de Drive (${new Date(choice.rem.modifiedTime).toLocaleString("es-ES", { dateStyle:"short", timeStyle:"short" })})</button></div></div>` : ""}
+        <p class="note">Los cambios se suben solos a los pocos segundos y, al volver a la app, se trae lo último. Si cambias cosas en el PC y en el móvil, se juntan: no se pierde nada. Google pide permiso de nuevo cada hora: si el botón ☁️ dice «Toca para traer lo último», tócalo.</p>
         <div class="toolbar"><button type="button" class="primary" data-gd="sync"${busy ? " disabled" : ""}>⇅ Sincronizar ahora</button><button type="button" class="ghost" data-gd="off"${busy ? " disabled" : ""}>Desconectar</button></div>`;
     }
     const msg = working || last.msg;
     box.innerHTML = h + `<p class="note st${working ? "" : last.kind ? " " + last.kind : ""}" aria-live="polite">${esc(msg || "")}</p>`;
   }
   function mount(){
-    $("driveChip").onclick = () => { if (on() && !choice) sync({ interactive:true }); else { go("datos"); render(); } };
+    $("driveChip").onclick = () => { if (on()) sync({ interactive:true }); else { go("datos"); render(); } };
     $("driveBox").addEventListener("click", e => {
       const a = e.target.closest("[data-gd]"); if (!a) return;
       const k = a.dataset.gd;
       if (k === "sync") sync({ interactive:true });
       else if (k === "off") disconnect();
-      else if (k === "keep-here") sync({ interactive:true, keep:"here" });
-      else if (k === "keep-drive") sync({ interactive:true, keep:"drive" });
     });
     render();
     if (hosted) loadGis().then(initClient).catch(() => {});
+    if (hosted && on() && hasToken()) setTimeout(() => sync(), 500); // con permiso vigente, sincroniza al abrir
   }
   // Hoja de Google: se sube el Excel y Drive lo convierte; para traerla, se exporta otra vez a Excel
   const SHEET = "Mi Alquiler (hoja)";
